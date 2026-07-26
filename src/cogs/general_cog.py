@@ -273,10 +273,7 @@ class GeneralCog(commands.Cog):
                 prev_tts.cancel()
                 session_manager.remove_tts_task(thread_id)
 
-            # A killed turn leaves the conversation in an unknown state -
-            # reusing conv_id risks silently hanging on the next message.
-            # conversation_id must be cleared too, not just status: the
-            # text path only treats a session as pending when both are unset.
+            # Must clear conversation_id too, not just status - pending requires both unset.
             session_manager.set_session(thread_id, {**session, "status": "pending", "conversation_id": None})
 
         from core.agy_runner import stop_active_process

@@ -20,9 +20,7 @@ jobs:
           node-version: "20"
           registry-url: "https://registry.npmjs.org"
 
-      # npm 12 raised its own Node engine requirement above what
-      # node-version 20 (above) provides, so @latest now breaks this step.
-      # Pinned to the v11 major, which still satisfies OIDC's v11.5.1+ need.
+      # npm 12 requires Node 22.22+, above node-version 20 here - pin to v11.
       - name: Update npm (pinned to v11 for OIDC)
         run: npm install -g npm@11
 

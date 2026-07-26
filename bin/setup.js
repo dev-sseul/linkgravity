@@ -278,9 +278,7 @@ async function runSetup() {
     } else {
         const stderr = (restartResult.stderr || '').toString();
         if (stderr.includes('not found')) {
-            // Nothing to restart yet (first-ever setup, or pm2's process list was
-            // reset e.g. after a reboot without `pm2 save`) - start it instead of
-            // reporting a false "restarted" success.
+            // Nothing to restart yet - start it instead of a false "restarted".
             const botPath = path.join(__dirname, '..', 'src', 'main.py');
             const startResult = spawnSync(
                 'npx',

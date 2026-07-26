@@ -44,8 +44,7 @@ class VoiceCog(commands.Cog):
         self.save_bot_settings = save_bot_settings
         self.logger = logger
         self._voice_state = {}
-        # guild_id -> in-flight handle_stt_input task, if any. A new
-        # utterance cancels the previous one so replies can't race out of order.
+        # guild_id -> in-flight handle_stt_input task; a new utterance cancels the previous one.
         self._active_turns = {}
         self.enrollment = EnrollmentManager(
             bot, self._voice_state, self._play_audio, self.bot_settings, self.save_bot_settings, self.logger
@@ -292,8 +291,7 @@ class VoiceCog(commands.Cog):
         updated = []
         wake_word_pending = False
         if wake_word is not None:
-            # Deferred: wake_words only gets set once 5 samples are
-            # recorded and confirmed (see EnrollmentManager), not here.
+            # Deferred - wake_words is set later once 5 samples are recorded (see EnrollmentManager).
             wake_word_pending = True
         if active_times is not None:
             self.bot_settings["active_timer"] = active_times
@@ -383,8 +381,7 @@ class VoiceCog(commands.Cog):
                 await self.stt_session.clear_partial_msg(str(guild_id))
                 return
 
-            # Node runs STT itself before calling this endpoint, so this is
-            # already-recognized text, not raw audio - keeps STT off every VAD hit.
+            # Node runs STT itself before this call, so 'text' is already-recognized, not raw audio.
             text = data.get("text")
 
             thread_id = self._voice_state.get(str(guild_id))
@@ -407,10 +404,7 @@ class VoiceCog(commands.Cog):
             import difflib
             import re
 
-            # Wake detection is Node's audio-based Rustpotter detector's job.
-            # No text-similarity fallback: an unenrolled user (or a failed
-            # .rpw build - see EnrollmentManager._build_rustpotter_reference)
-            # just can't wake the bot until that's fixed.
+            # Wake detection is Node's Rustpotter detector's job - no text-similarity fallback.
             is_waking_up = bool(data.get("wake_confirmed"))
             matched_wake_word = data.get("matched_wake_word")
             is_active = self.stt_session.is_active(str(guild_id))
@@ -444,8 +438,7 @@ class VoiceCog(commands.Cog):
                         if prefix_similarity >= 0.6:
                             text_to_ai = " ".join(words[wake_word_count:]).strip()
 
-            # No text resemblance at all + short wake word (less acoustic
-            # signal, more false-wakes) -> require a closer match to trust it.
+            # Short wake words have less acoustic signal (more false-wakes) -> need a closer match.
             wake_syllables = len(re.sub(r"[^\w가-힣]", "", matched_wake_word or ""))
             min_prefix_similarity = 0.55 if wake_syllables <= 2 else 0.35
             if is_waking_up and prefix_similarity is not None and prefix_similarity < min_prefix_similarity:
@@ -458,9 +451,7 @@ class VoiceCog(commands.Cog):
 
             self.logger.debug(f"STT recognized: {text} -> AI: {text_to_ai}")
 
-            # A previous in-flight turn for this guild is now stale - cancel
-            # it, kill its agy process (like /stop), and stop its playback,
-            # rather than letting two turns race to completion.
+            # A stale in-flight turn for this guild - cancel it, kill its agy process, stop playback.
             prev_task = self._active_turns.get(str(guild_id))
             if prev_task and not prev_task.done():
                 prev_task.cancel()

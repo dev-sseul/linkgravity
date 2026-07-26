@@ -19,8 +19,7 @@ DEFAULT_LGY_CONFIG = {
     "voice_threshold": 3000,
     "tts_voice": "ko-KR-SunHiNeural",
     "tts_enabled": True,
-    # Sticky default for new /new sessions - set whenever /model succeeds,
-    # so a new thread doesn't fall back to agy's own settings.json model.
+    # Sticky default for /new sessions, set whenever /model succeeds.
     "default_model": "",
 }
 
@@ -94,10 +93,7 @@ def is_allowed_session_channel(channel) -> bool:
 
 TMP_FILE_DIR = WORKSPACE_DIR / "tmp-files"
 TMP_VOICE_DIR = WORKSPACE_DIR / "tmp-voice"
-# Per-user wake-word recordings + built .rpw reference (see
-# EnrollmentManager in cogs/voice/enrollment.py). No folder/.rpw yet means
-# "not enrolled" - falls back to transcribing everything and matching
-# bot_settings["wake_words"] as text.
+# Per-user wake-word recordings + built .rpw reference (see EnrollmentManager).
 WAKE_REF_DIR = WORKSPACE_DIR / "wake_refs"
 
 TMP_FILE_DIR.mkdir(parents=True, exist_ok=True)
