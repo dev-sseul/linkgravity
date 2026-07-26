@@ -1,0 +1,59 @@
+{
+  "name": "linkgravity",
+  "version": "1.0.0",
+  "description": "Discord bot bridge for the Antigravity (agy) CLI, with voice interaction support",
+  "scripts": {
+    "postinstall": "node npm-scripts/postinstall.js",
+    "start": "node npm-scripts/run-dev.js",
+    "dev": "node npm-scripts/run-dev.js",
+    "format": "prettier --write \"bin/**/*.js\" \"npm-scripts/**/*.js\" \"voice-service/*.js\"",
+    "format:check": "prettier --check \"bin/**/*.js\" \"npm-scripts/**/*.js\" \"voice-service/*.js\"",
+    "prepare": "node npm-scripts/prepare.js"
+  },
+  "author": "dev-sseul",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dev-sseul/linkgravity.git"
+  },
+  "homepage": "https://github.com/dev-sseul/linkgravity#readme",
+  "bugs": {
+    "url": "https://github.com/dev-sseul/linkgravity/issues"
+  },
+  "keywords": [
+    "discord",
+    "discord-bot",
+    "antigravity",
+    "agy",
+    "cli",
+    "voice",
+    "ai-agent"
+  ],
+  "bin": {
+    "lgy": "./bin/cli.js",
+    "linkgravity": "./bin/cli.js"
+  },
+  "files": [
+    "bin",
+    "npm-scripts",
+    "hooks",
+    "src",
+    "voice-service/index.js",
+    "voice-service/package.json",
+    "voice-service/package-lock.json",
+    "requirements.txt",
+    "!**/__pycache__/**",
+    "!**/*.py[cod]"
+  ],
+  "engines": {
+    "node": ">=18.0.0",
+    "python": ">=3.10"
+  },
+  "dependencies": {
+    "@clack/prompts": "^1.7.0",
+    "pm2": "^5.3.0"
+  },
+  "devDependencies": {
+    "prettier": "^3.3.0"
+  }
+}

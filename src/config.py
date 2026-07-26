@@ -1,0 +1,123 @@
+import os
+from pathlib import Path
+
+from core.atomic_io import atomic_write_json, safe_load_json
+
+WORKSPACE_DIR = Path.home() / ".gemini" / "linkgravity"
+WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
+DATA_DIR = WORKSPACE_DIR / "data"
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+LGY_CONFIG_FILE = WORKSPACE_DIR / "lgy.json"
+
+DEFAULT_LGY_CONFIG = {
+    "discord_token": "",
+    "session_scopes": [],
+    "allowed_user_ids": "",
+    "wake_words": "Jarvis",
+    "active_timer": 60,
+    "voice_threshold": 3000,
+    "tts_voice": "ko-KR-SunHiNeural",
+    "tts_enabled": True,
+}
+
+
+class _PrintLogger:
+    """logger.py hasn't been initialized yet at this point in config.py's
+    own load order, so this is a minimal stand-in just for the (rare)
+    lgy.json-corrupted case."""
+
+    def error(self, msg):
+        print(f"[config] {msg}")
+
+
+def load_bot_settings():
+    data = safe_load_json(LGY_CONFIG_FILE, DEFAULT_LGY_CONFIG.copy(), logger=_PrintLogger())
+    for k, v in DEFAULT_LGY_CONFIG.items():
+        data.setdefault(k, v)
+    return data
+
+
+def save_bot_settings(data):
+    atomic_write_json(LGY_CONFIG_FILE, data)
+
+
+bot_settings = load_bot_settings()
+
+from core.logger import init_logger
+from core.session_manager import SessionManager
+
+logger = init_logger(WORKSPACE_DIR)
+
+
+DISCORD_TOKEN = bot_settings.get("discord_token", "")
+
+
+def _parse_session_scopes(raw_scopes) -> dict:
+    """
+    Each entry: {"guild_id": "...", "channel_ids": ["...", ...]}.
+    An empty/missing channel_ids means "the whole server is allowed" -
+    otherwise only the listed channels within that server are allowed.
+    Returns {guild_id: frozenset_of_channel_ids_or_None}.
+    """
+    scopes = {}
+    for entry in raw_scopes or []:
+        try:
+            guild_id = int(entry["guild_id"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        channel_ids = entry.get("channel_ids") or []
+        channel_ids = {int(c) for c in channel_ids if str(c).strip()}
+        scopes[guild_id] = frozenset(channel_ids) if channel_ids else None
+    return scopes
+
+
+SESSION_SCOPES = _parse_session_scopes(bot_settings.get("session_scopes"))
+ALLOWED_IDS = set(int(x) for x in bot_settings.get("allowed_user_ids", "").split(",") if x.strip())
+TTS_VOICE = bot_settings.get("tts_voice", "ko-KR-SunHiNeural")
+
+
+def is_allowed_session_channel(channel) -> bool:
+    """True if a new agy session may be started from this channel (via
+    /new). A channel is allowed if its server is in SESSION_SCOPES AND
+    either that server has no channel restriction (whole-server access)
+    or this specific channel is in its allowed list."""
+    guild = getattr(channel, "guild", None)
+    if not guild or guild.id not in SESSION_SCOPES:
+        return False
+    allowed_channels = SESSION_SCOPES[guild.id]
+    return allowed_channels is None or channel.id in allowed_channels
+
+
+TMP_FILE_DIR = WORKSPACE_DIR / "tmp-files"
+TMP_VOICE_DIR = WORKSPACE_DIR / "tmp-voice"
+# Per-user wake-word recordings + built .rpw reference (see
+# EnrollmentManager in cogs/voice/enrollment.py). No folder/.rpw yet means
+# "not enrolled" - falls back to transcribing everything and matching
+# bot_settings["wake_words"] as text.
+WAKE_REF_DIR = WORKSPACE_DIR / "wake_refs"
+
+TMP_FILE_DIR.mkdir(parents=True, exist_ok=True)
+TMP_VOICE_DIR.mkdir(parents=True, exist_ok=True)
+WAKE_REF_DIR.mkdir(parents=True, exist_ok=True)
+
+MAX_EMBED_LEN = 1900
+STREAM_RATE_LIMIT_SEC = 0.5
+PERSISTENT_FILE = DATA_DIR / "persistent_tools.json"
+SESSION_FILE = DATA_DIR / "sessions.json"
+
+EMBED_COLOR = 0x5865F2
+
+MODEL_CHOICES = {
+    "flash": "Gemini 3.5 Flash",
+    "flash_lite": "Gemini 3.5 Flash Lite",
+    "pro": "Gemini 3.1 Pro",
+}
+
+AGY_BIN = os.getenv("AGY_BIN_PATH", str(Path.home() / ".local/bin/agy"))
+
+session_manager = SessionManager(DATA_DIR)
+
+
+def allowed(user_id: int) -> bool:
+    return not ALLOWED_IDS or user_id in ALLOWED_IDS

@@ -1,0 +1,35 @@
+default_install_hook_types:
+  - pre-commit
+  - commit-msg
+
+repos:
+  # Python lint + format. Runs in its own isolated env that pre-commit
+  # manages automatically - not our project venv, so this needs no path
+  # resolution at all (unlike the ruff-in-our-venv approach this
+  # replaces).
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.22
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+      - id: ruff-format
+
+  # JS format. NOT using pre-commit/mirrors-prettier here - it's
+  # archived and stuck on prettier 3.1.0, older than what this repo
+  # already uses (^3.3.0). Running our own already-installed prettier
+  # via a "local" hook avoids that and avoids installing a second copy
+  # of prettier into a separate pre-commit-managed env.
+  - repo: local
+    hooks:
+      - id: prettier
+        name: prettier
+        entry: npx prettier --write
+        language: system
+        files: \.js$
+
+  # Commit message format (conventional commits) - replaces commitlint.
+  - repo: https://github.com/compilerla/conventional-pre-commit
+    rev: v4.3.0
+    hooks:
+      - id: conventional-pre-commit
+        stages: [commit-msg]

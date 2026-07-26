@@ -1,0 +1,27 @@
+venv/
+__pycache__/
+*.pyc
+.env
+sessions.json
+persistent_tools.json
+cron.json
+cron_run_state.json
+cron_state.json
+data/*.json
+*.log
+tmp-images/
+tmp-files/
+tmp-voice/
+.DS_Store
+*.sqlite
+*.db
+node_modules/
+logs/
+
+# Standard Python
+.venv/
+dist/
+build/
+*.egg-info/
+.python-version
+.ruff_cache/

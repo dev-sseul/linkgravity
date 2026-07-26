@@ -1,0 +1,28 @@
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+src = ["src"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes (unused imports/vars, undefined names)
+    "I",   # import sorting
+    "UP",  # pyupgrade (modern Python syntax)
+    "B",   # bugbear (common bug patterns)
+]
+ignore = [
+    "E501",  # line too long (formatter handles this; some Discord embeds/URLs are long)
+]
+
+[tool.ruff.lint.per-file-ignores]
+# These closures are defined AND awaited within the same loop iteration
+# (via asyncio.gather before the next retry attempt), so the usual
+# "closure captures the loop variable's final value" bug doesn't apply -
+# this is a false positive for this specific pattern.
+"src/core/agy_runner.py" = ["B023"]
+"src/config.py" = ["E402"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"

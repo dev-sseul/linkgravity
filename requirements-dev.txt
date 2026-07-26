@@ -1,0 +1,10 @@
+-r requirements.txt
+
+# Dev-only tooling - not needed at runtime.
+# ruff: kept here for editor integration (e.g. VS Code's Ruff extension)
+# and manual `venv/bin/ruff` use - the pre-commit hook itself doesn't
+# depend on this, it manages its own isolated ruff (see
+# .pre-commit-config.yaml).
+ruff>=0.15.0
+# Runs the git hooks declared in .pre-commit-config.yaml.
+pre-commit>=4.0.0
