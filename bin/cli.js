@@ -14,6 +14,7 @@ const color = {
     green: '\x1b[32m',
     cyan: '\x1b[36m',
     yellow: '\x1b[33m',
+    red: '\x1b[31m',
     dim: '\x1b[2m',
 };
 
@@ -76,31 +77,72 @@ function runPm2(args, silent = true) {
 // Only strips the FIRST bracket group if present, so aiohttp's second
 // "[INFO ]" bracket (not a timestamp) is left alone.
 const TIMESTAMP_PREFIX = /^\[?\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}\]?\s*/;
+// loguru's colorize=True puts an ANSI code before the timestamp digits, breaking the '^' anchor above.
+// eslint-disable-next-line no-control-regex
+const ANSI_ESCAPE = /\x1b\[[0-9;]*m/g;
+
+const LEVEL_COLOR = {
+    DEBUG: color.dim,
+    INFO: color.cyan,
+    WARNING: color.yellow,
+    ERROR: color.red,
+    CRITICAL: color.red,
+};
+
+// Recolors the level word ourselves so Python (loguru) and Node (plain console.log) lines match.
+function colorizeLevel(line) {
+    return line.replace(/\b(DEBUG|INFO|WARNING|ERROR|CRITICAL)\b/, (match) => {
+        const c = LEVEL_COLOR[match];
+        return c ? `${c}${match}${color.reset}` : match;
+    });
+}
 
 function runPm2LogsClean(args, showStamps = false) {
     const cp = spawn('npx', ['-y', 'pm2', ...args], { cwd: path.join(__dirname, '..') });
 
-    const filterAndPrint = (data) => {
-        const lines = data.toString().split('\n');
-        for (const line of lines) {
-            if (line.trim().length === 0) continue;
-            if (
-                line.includes('In-memory PM2') ||
-                line.includes('pm2 update') ||
-                line.includes('[TAILING]') ||
-                line.includes('.pm2/logs/lgy') ||
-                line.includes('In memory PM2 version') ||
-                line.includes('Local PM2 version') ||
-                line.match(/^>+ /)
-            ) {
-                continue;
-            }
-            console.log(showStamps ? line : line.replace(TIMESTAMP_PREFIX, ''));
+    const printLine = (line) => {
+        if (line.trim().length === 0) return;
+        if (
+            line.includes('In-memory PM2') ||
+            line.includes('pm2 update') ||
+            line.includes('[TAILING]') ||
+            line.includes('.pm2/logs/lgy') ||
+            line.includes('In memory PM2 version') ||
+            line.includes('Local PM2 version') ||
+            line.match(/^>+ /)
+        ) {
+            return;
         }
+        const displayLine = showStamps
+            ? colorizeLevel(line)
+            : colorizeLevel(line.replace(ANSI_ESCAPE, '').replace(TIMESTAMP_PREFIX, ''));
+        console.log(displayLine);
     };
 
-    cp.stdout.on('data', filterAndPrint);
-    cp.stderr.on('data', filterAndPrint);
+    // A line can arrive split across two 'data' events, so buffer until '\n' is seen.
+    function makeChunkHandler() {
+        let buffer = '';
+        const handler = (data) => {
+            buffer += data.toString();
+            const lines = buffer.split('\n');
+            buffer = lines.pop(); // last element: '' if buffer ended in '\n', else the incomplete tail
+            for (const line of lines) printLine(line);
+        };
+        handler.flush = () => {
+            if (buffer) printLine(buffer);
+            buffer = '';
+        };
+        return handler;
+    }
+
+    const stdoutHandler = makeChunkHandler();
+    const stderrHandler = makeChunkHandler();
+    cp.stdout.on('data', stdoutHandler);
+    cp.stderr.on('data', stderrHandler);
+    cp.on('close', () => {
+        stdoutHandler.flush();
+        stderrHandler.flush();
+    });
 }
 
 function verifyStartup() {
@@ -265,8 +307,7 @@ if (cmd === 'version' || cmd === '-v' || cmd === '--version') {
     if (restartResult.status === 0) {
         verifyStartup();
     } else if ((restartResult.stderr || '').toString().includes('not found')) {
-        // Daemon wasn't running before the update - start it fresh instead
-        // of reporting a restart that never had anything to restart.
+        // Wasn't running before the update - start fresh instead of a false "restarted".
         info("Daemon wasn't running - starting it fresh...");
         runPm2(['start', botPath, '--interpreter', pythonExe, '--name', 'lgy']);
         verifyStartup();
