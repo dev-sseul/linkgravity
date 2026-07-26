@@ -119,8 +119,9 @@ async def handle_thread_reply(bot, message: discord.Message):
     adapter = get_adapter()
     content = message.content.strip()
     if content.startswith("/new"):
-        await adapter.send_message(thread, 
-            "To start a new session, please use the `/new` slash command (not typed as text) - it works from inside a thread too and will open the new one in the right place."
+        await adapter.send_message(
+            thread,
+            "To start a new session, please use the `/new` slash command (not typed as text) - it works from inside a thread too and will open the new one in the right place.",
         )
         return
 

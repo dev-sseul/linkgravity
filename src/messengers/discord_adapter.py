@@ -187,6 +187,7 @@ class DiscordAdapter(MessengerAdapter):
             submit_btn.callback = submit_callback
             view.add_item(submit_btn)
         else:
+
             def make_option_callback(opt_text: str):
                 async def callback(interaction: discord.Interaction):
                     await _resolve(interaction, opt_text, "Selected")
@@ -200,6 +201,7 @@ class DiscordAdapter(MessengerAdapter):
                 view.add_item(btn)
 
         if allow_write_in:
+
             class WriteInModal(discord.ui.Modal, title="Write in"):
                 answer = discord.ui.TextInput(
                     label="Enter your response",

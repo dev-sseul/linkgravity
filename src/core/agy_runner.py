@@ -126,9 +126,7 @@ async def run_agy(
                 libstdbuf_path = _find_libstdbuf()  # works around agy's output-truncation bug
                 if libstdbuf_path:
                     existing_preload = env.get("LD_PRELOAD", "")
-                    env["LD_PRELOAD"] = (
-                        f"{libstdbuf_path}:{existing_preload}" if existing_preload else libstdbuf_path
-                    )
+                    env["LD_PRELOAD"] = f"{libstdbuf_path}:{existing_preload}" if existing_preload else libstdbuf_path
                     env["_STDBUF_O"] = str(_STDOUT_BUFFER_SIZE)
 
                 kwargs = {

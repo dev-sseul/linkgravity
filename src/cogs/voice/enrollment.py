@@ -17,7 +17,6 @@ NODE_REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=5)
 
 
 class RecordingPromptView(discord.ui.View):
-
     def __init__(self, manager: "EnrollmentManager", user_id: str):
         super().__init__(timeout=120)
         self.manager = manager
@@ -48,7 +47,6 @@ class RecordingPromptView(discord.ui.View):
 
 
 class SampleConfirmView(discord.ui.View):
-
     def __init__(self, manager: "EnrollmentManager", user_id: str):
         super().__init__(timeout=60)
         self.manager = manager
