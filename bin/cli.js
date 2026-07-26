@@ -113,9 +113,8 @@ function runPm2LogsClean(args, showStamps = false) {
         ) {
             return;
         }
-        const displayLine = showStamps
-            ? colorizeLevel(line)
-            : colorizeLevel(line.replace(ANSI_ESCAPE, '').replace(TIMESTAMP_PREFIX, ''));
+        const clean = line.replace(ANSI_ESCAPE, '');
+        const displayLine = colorizeLevel(showStamps ? clean : clean.replace(TIMESTAMP_PREFIX, ''));
         console.log(displayLine);
     };
 
@@ -210,7 +209,14 @@ if (cmd === 'version' || cmd === '-v' || cmd === '--version') {
     runPm2(['restart', 'lgy', '--update-env']);
     verifyStartup();
 } else if (cmd === 'logs') {
-    let args = process.argv.slice(3);
+    const SHORT_FLAGS = ['-f', '-n', '-t'];
+    let args = process.argv.slice(3).flatMap((arg) => {
+        // Only split bare combined short flags (e.g. "-fn" -> "-f", "-n"), not "--long" flags.
+        if (!/^-[a-z]{2,}$/.test(arg)) return [arg];
+        const chars = arg.slice(1).split('');
+        if (!chars.every((c) => SHORT_FLAGS.includes(`-${c}`))) return [arg];
+        return chars.map((c) => `-${c}`);
+    });
     let pm2Args = ['logs', 'lgy'];
     let isFollow = false;
     let showStamps = false;
