@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { spawnSync } = require('child_process');
+const { python: pythonExe } = require('../npm-scripts/venv-paths');
 
 const color = {
     reset: '\x1b[0m',
@@ -70,19 +71,37 @@ async function collectSessionScopes(existingScopes) {
         }
         isFirst = false;
 
-        const channelIds = await p.text({
-            message:
-                'Restrict to specific channel ID(s) in this server? Right-click a CHANNEL → Copy Channel ID. ' +
-                'Comma-separated, or leave empty to allow the WHOLE server:',
-        });
-        if (p.isCancel(channelIds)) {
-            p.cancel('Setup cancelled.');
-            process.exit(0);
+        const channelIds = [];
+        let isFirstChannel = true;
+        while (true) {
+            const channelId = await p.text({
+                message: isFirstChannel
+                    ? 'Restrict to a specific channel in this server? Right-click a CHANNEL → Copy Channel ID. ' +
+                      '(leave empty to allow the WHOLE server):'
+                    : 'Another channel ID to restrict to (leave empty if done):',
+            });
+            if (p.isCancel(channelId)) {
+                p.cancel('Setup cancelled.');
+                process.exit(0);
+            }
+            if (!channelId) break;
+            isFirstChannel = false;
+            channelIds.push(channelId.trim());
+
+            const addAnotherChannel = await p.confirm({
+                message: 'Add another channel?',
+                initialValue: false,
+            });
+            if (p.isCancel(addAnotherChannel)) {
+                p.cancel('Setup cancelled.');
+                process.exit(0);
+            }
+            if (!addAnotherChannel) break;
         }
 
         scopes.push({
             guild_id: guildId.trim(),
-            channel_ids: channelIds ? splitIds(channelIds) : [],
+            channel_ids: channelIds,
         });
 
         const addAnother = await p.confirm({ message: 'Add another server?', initialValue: false });
@@ -249,12 +268,40 @@ async function runSetup() {
     p.note('Configuration saved to lgy.json successfully!', 'Success');
 
     console.log(`${color.cyan}▶${color.reset} Restarting daemon to apply changes...`);
-    spawnSync('npx', ['-y', 'pm2', 'restart', 'lgy', '--update-env'], {
+    const restartResult = spawnSync('npx', ['-y', 'pm2', 'restart', 'lgy', '--update-env'], {
         stdio: 'pipe',
         env: { ...process.env, PYTHONUNBUFFERED: '1' },
     });
 
-    p.outro('Daemon restarted.');
+    if (restartResult.status === 0) {
+        p.outro('Daemon restarted.');
+    } else {
+        const stderr = (restartResult.stderr || '').toString();
+        if (stderr.includes('not found')) {
+            // Nothing to restart yet (first-ever setup, or pm2's process list was
+            // reset e.g. after a reboot without `pm2 save`) - start it instead of
+            // reporting a false "restarted" success.
+            const botPath = path.join(__dirname, '..', 'src', 'main.py');
+            const startResult = spawnSync(
+                'npx',
+                ['-y', 'pm2', 'start', botPath, '--interpreter', pythonExe, '--name', 'lgy'],
+                { stdio: 'pipe', env: { ...process.env, PYTHONUNBUFFERED: '1' } },
+            );
+            if (startResult.status === 0) {
+                p.outro("Daemon wasn't running yet - started it fresh instead.");
+            } else {
+                console.error((startResult.stderr || '').toString().trim());
+                p.outro(
+                    `${color.yellow}⚠${color.reset} Failed to start the daemon - run \`lgy start\` manually to see the full error.`,
+                );
+            }
+        } else {
+            console.error(stderr.trim());
+            p.outro(
+                `${color.yellow}⚠${color.reset} Failed to restart the daemon - run \`lgy restart\` manually to see the full error.`,
+            );
+        }
+    }
 }
 
 module.exports = runSetup;
