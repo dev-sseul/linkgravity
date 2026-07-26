@@ -6,7 +6,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 
-from config import logger
+from config import allowed, logger
 
 from .voice.enrollment import EnrollmentManager
 from .voice.stt_session import SttSessionTracker
@@ -152,6 +152,10 @@ class VoiceCog(commands.Cog):
 
     @app_commands.command(name="join", description="Summon the bot to your current voice channel")
     async def cmd_join(self, interaction: discord.Interaction):
+        if not allowed(interaction.user.id):
+            await interaction.response.send_message("❌ Permission Denied", ephemeral=True)
+            return
+
         if not isinstance(interaction.channel, discord.Thread):
             await interaction.response.send_message(
                 "❌ This command can only be used inside a thread created with `/new`.", ephemeral=True
@@ -260,6 +264,10 @@ class VoiceCog(commands.Cog):
     ):
         import aiohttp
 
+        if not allowed(interaction.user.id):
+            await interaction.response.send_message("❌ Permission Denied", ephemeral=True)
+            return
+
         if (
             wake_word is None
             and active_times is None
@@ -330,6 +338,10 @@ class VoiceCog(commands.Cog):
 
     @app_commands.command(name="leave", description="Make the bot leave the voice channel")
     async def cmd_leave(self, interaction: discord.Interaction):
+        if not allowed(interaction.user.id):
+            await interaction.response.send_message("❌ Permission Denied", ephemeral=True)
+            return
+
         guild_id = interaction.guild_id
         await interaction.response.send_message("👋 Disconnected from voice channel.")
         try:
@@ -365,6 +377,12 @@ class VoiceCog(commands.Cog):
         try:
             guild_id = data.get("guild_id")
             user_id = data.get("user_id")
+
+            if not allowed(int(user_id)):
+                self.logger.debug(f"STT: ignoring speech from non-allowed user {user_id}")
+                await self.stt_session.clear_partial_msg(str(guild_id))
+                return
+
             # Node runs STT itself before calling this endpoint, so this is
             # already-recognized text, not raw audio - keeps STT off every VAD hit.
             text = data.get("text")
