@@ -152,7 +152,10 @@ function verifyStartup() {
     cp.stderr.on('data', checkLog);
 }
 
-if (cmd === 'start') {
+if (cmd === 'version' || cmd === '-v' || cmd === '--version') {
+    const pkg = require('../package.json');
+    console.log(`linkgravity v${pkg.version}`);
+} else if (cmd === 'start') {
     info('Starting LinkGravity daemon...');
     runPm2(['start', botPath, '--interpreter', pythonExe, '--name', 'lgy']);
     verifyStartup();
@@ -283,6 +286,7 @@ if (cmd === 'start') {
             'Usage: lgy <command> [options]',
             '',
             'Commands:',
+            '  version    Print the installed version (-v, --version)',
             '  start      Start bot in the background (PM2 daemon)',
             '  stop       Stop the background bot',
             '  restart    Restart the background bot',
@@ -314,6 +318,7 @@ if (cmd === 'start') {
                     value: 'update',
                     hint: 'Check npm for a newer version and install it',
                 },
+                { label: 'Version', value: 'version', hint: 'Print the installed version' },
                 {
                     label: 'Enable Auto-start',
                     value: 'enable',
