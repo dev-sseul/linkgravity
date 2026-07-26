@@ -7,7 +7,17 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from config import DATA_DIR, EMBED_COLOR, MODEL_CHOICES, allowed, is_allowed_session_channel, logger, session_manager
+from config import (
+    DATA_DIR,
+    EMBED_COLOR,
+    MODEL_CHOICES,
+    allowed,
+    bot_settings,
+    is_allowed_session_channel,
+    logger,
+    save_bot_settings,
+    session_manager,
+)
 from core.atomic_io import atomic_write_json, safe_load_json
 from utils.utils import get_default_cwd
 
@@ -116,7 +126,7 @@ class GeneralCog(commands.Cog):
         from utils.utils import get_current_model
 
         session = session_manager.get_session(str(interaction.channel_id)) or {}
-        current_model = session.get("model") or get_current_model()
+        current_model = session.get("model") or bot_settings.get("default_model") or get_current_model()
 
         choices = []
         if current_model:
@@ -151,6 +161,8 @@ class GeneralCog(commands.Cog):
             if not model:
                 await interaction.response.send_message(f"⚠️ Model matching `{model}` not found.", ephemeral=True)
                 return
+        else:
+            model = bot_settings.get("default_model") or None
 
         await interaction.response.defer(ephemeral=True)
         import uuid
@@ -197,8 +209,16 @@ class GeneralCog(commands.Cog):
             partial = next((m for m in cached_models if model.lower() in m.lower()), None)
             final_model = exact or partial or model
             session_manager.update_session(str(interaction.channel_id), "model", final_model)
+
+            bot_settings["default_model"] = final_model
+            save_bot_settings(bot_settings)
+
             await interaction.response.send_message(
-                embed=discord.Embed(description=f"🤖 Model changed: **{final_model}**", color=EMBED_COLOR)
+                embed=discord.Embed(
+                    description=f"🤖 Model changed: **{final_model}**\n"
+                    f"💾 Also set as the default for new `/new` sessions.",
+                    color=EMBED_COLOR,
+                )
             )
         except discord.Forbidden:
             logger.error(f"Missing permissions to start thread in channel {interaction.channel_id}")

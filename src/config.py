@@ -19,6 +19,9 @@ DEFAULT_LGY_CONFIG = {
     "voice_threshold": 3000,
     "tts_voice": "ko-KR-SunHiNeural",
     "tts_enabled": True,
+    # Sticky default for new /new sessions - set whenever /model succeeds,
+    # so a new thread doesn't fall back to agy's own settings.json model.
+    "default_model": "",
 }
 
 
