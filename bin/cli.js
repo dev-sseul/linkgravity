@@ -176,7 +176,12 @@ if (cmd === 'start') {
             i++;
         } else if (args[i] === '-f') {
             isFollow = true;
-        } else if (args[i] === '-t' || args[i] === '--stamp' || args[i] === '--timestamp' || args[i] === '--timestamps') {
+        } else if (
+            args[i] === '-t' ||
+            args[i] === '--stamp' ||
+            args[i] === '--timestamp' ||
+            args[i] === '--timestamps'
+        ) {
             showStamps = true;
         } else {
             pm2Args.push(args[i]);

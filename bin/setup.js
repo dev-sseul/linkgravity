@@ -102,7 +102,7 @@ async function collectUserIds(existingIds) {
 
     p.note(
         'ONLY these users can use the bot (leave completely empty on first setup to allow EVERYONE). ' +
-            "Not related to DMs - this only gates the channel/threads configured above.",
+            'Not related to DMs - this only gates the channel/threads configured above.',
         'Allowed Discord Users',
     );
 
@@ -170,9 +170,9 @@ async function runSetup() {
     const userIds = await collectUserIds(existingUserIds);
 
     p.note(
-        'Wake words aren\'t set here anymore - they need a voice recording to register '
-            + '(so only your voice triggers them), which this terminal wizard can\'t do. '
-            + 'Set them from Discord with `/sound wake_words:<word>` once the bot is running.',
+        "Wake words aren't set here anymore - they need a voice recording to register " +
+            "(so only your voice triggers them), which this terminal wizard can't do. " +
+            'Set them from Discord with `/sound wake_words:<word>` once the bot is running.',
         'Wake Words',
     );
 
