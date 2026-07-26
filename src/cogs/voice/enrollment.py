@@ -337,7 +337,7 @@ class EnrollmentManager:
             except aiohttp.ClientError as e:
                 self.logger.warning(f"Failed to invalidate cached detector for {user_id}: {e}")
 
-        self.bot_settings["wake_words"] = session["word"]
+        self.bot_settings.setdefault("wake_words", {})[user_id] = session["word"]
         self.save_bot_settings(self.bot_settings)
 
         del self._enrollment[user_id]

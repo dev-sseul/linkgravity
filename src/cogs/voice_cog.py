@@ -174,12 +174,13 @@ class VoiceCog(commands.Cog):
         vc_chan = interaction.user.voice.channel
         guild_id = interaction.guild_id
 
-        has_wake_word = bool(self.bot_settings.get("wake_words"))
+        wake_word_map = self.bot_settings.get("wake_words") or {}
+        has_wake_word = bool(wake_word_map)
         active_timer = self.bot_settings.get("active_timer", 60)
 
         if has_wake_word:
-            wake_words_raw = self.bot_settings["wake_words"]
-            ww_list = [f"`{w.strip()}`" for w in wake_words_raw.split(",") if w.strip()]
+            # dict.fromkeys dedupes while keeping first-registered order (each user has their own word).
+            ww_list = [f"`{w.strip()}`" for w in dict.fromkeys(wake_word_map.values()) if w.strip()]
             ww_str = ", ".join(ww_list[:-1]) + f", or {ww_list[-1]}" if len(ww_list) > 1 else ww_list[0]
             msg = (
                 f"🎤 Connected to `{vc_chan.name}`.\n"
@@ -274,7 +275,7 @@ class VoiceCog(commands.Cog):
             and tts_voice is None
             and tts_enabled is None
         ):
-            curr_wake = self.bot_settings.get("wake_words", "None")
+            curr_wake = (self.bot_settings.get("wake_words") or {}).get(str(interaction.user.id), "None")
             curr_timer = self.bot_settings.get("active_timer", 60)
             curr_thresh = self.bot_settings.get("voice_threshold", 3000)
             curr_tts = self.bot_settings.get("tts_voice", "en-US-AriaNeural")

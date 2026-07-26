@@ -7,6 +7,10 @@ WORKSPACE_DIR = Path.home() / ".gemini" / "linkgravity"
 WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
 DATA_DIR = WORKSPACE_DIR / "data"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
+# Per-user wake-word recordings + built .rpw reference (see EnrollmentManager).
+# Defined early so load_bot_settings' migration below can read it.
+WAKE_REF_DIR = WORKSPACE_DIR / "wake_refs"
+WAKE_REF_DIR.mkdir(parents=True, exist_ok=True)
 
 LGY_CONFIG_FILE = WORKSPACE_DIR / "lgy.json"
 
@@ -14,7 +18,8 @@ DEFAULT_LGY_CONFIG = {
     "discord_token": "",
     "session_scopes": [],
     "allowed_user_ids": "",
-    "wake_words": "Jarvis",
+    # user_id (str) -> registered word, one per person (see EnrollmentManager._commit_enrollment).
+    "wake_words": {},
     "active_timer": 60,
     "voice_threshold": 3000,
     "tts_voice": "ko-KR-SunHiNeural",
@@ -33,10 +38,26 @@ class _PrintLogger:
         print(f"[config] {msg}")
 
 
+def _migrate_legacy_wake_words():
+    """Pre-1.3, wake_words was one global string shared by everyone and
+    overwritten by each /sound call. The .rpw files were always saved per
+    user_id though, so rebuild the real per-user mapping from those."""
+    migrated = {}
+    for user_dir in WAKE_REF_DIR.iterdir():
+        if not user_dir.is_dir():
+            continue
+        rpw = next(user_dir.glob("*.rpw"), None)
+        if rpw:
+            migrated[user_dir.name] = rpw.stem.replace("_", " ")
+    return migrated
+
+
 def load_bot_settings():
     data = safe_load_json(LGY_CONFIG_FILE, DEFAULT_LGY_CONFIG.copy(), logger=_PrintLogger())
     for k, v in DEFAULT_LGY_CONFIG.items():
         data.setdefault(k, v)
+    if isinstance(data.get("wake_words"), str):
+        data["wake_words"] = _migrate_legacy_wake_words()
     return data
 
 
@@ -93,12 +114,9 @@ def is_allowed_session_channel(channel) -> bool:
 
 TMP_FILE_DIR = WORKSPACE_DIR / "tmp-files"
 TMP_VOICE_DIR = WORKSPACE_DIR / "tmp-voice"
-# Per-user wake-word recordings + built .rpw reference (see EnrollmentManager).
-WAKE_REF_DIR = WORKSPACE_DIR / "wake_refs"
 
 TMP_FILE_DIR.mkdir(parents=True, exist_ok=True)
 TMP_VOICE_DIR.mkdir(parents=True, exist_ok=True)
-WAKE_REF_DIR.mkdir(parents=True, exist_ok=True)
 
 MAX_EMBED_LEN = 1900
 STREAM_RATE_LIMIT_SEC = 0.5
