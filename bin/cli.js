@@ -222,6 +222,58 @@ if (cmd === 'start') {
     runSetup().catch((err) => {
         console.error('Setup wizard crashed:', err.message);
     });
+} else if (cmd === 'update') {
+    const pkg = require('../package.json');
+    const currentVersion = pkg.version;
+
+    info('Checking npm for the latest version...');
+    const viewResult = spawnSync('npm', ['view', 'linkgravity', 'version'], { stdio: 'pipe' });
+    if (viewResult.error || viewResult.status !== 0) {
+        console.error(
+            (viewResult.stderr || '').toString().trim() ||
+                'Failed to check the latest version on npm.',
+        );
+        process.exit(1);
+    }
+    const latestVersion = viewResult.stdout.toString().trim();
+
+    if (latestVersion === currentVersion) {
+        success(`Already up to date (v${currentVersion}).\n`);
+        process.exit(0);
+    }
+
+    info(`Updating: v${currentVersion} -> v${latestVersion}...`);
+    const installResult = spawnSync('npm', ['install', '-g', 'linkgravity@latest'], {
+        stdio: 'inherit',
+    });
+    if (installResult.status !== 0) {
+        console.error('npm install failed - update aborted, still on the old version.');
+        process.exit(1);
+    }
+    success(`Installed v${latestVersion}.`);
+
+    info('Restarting daemon to apply the update...');
+    const restartResult = spawnSync('npx', ['-y', 'pm2', 'restart', 'lgy', '--update-env'], {
+        stdio: 'pipe',
+        cwd: path.join(__dirname, '..'),
+        env: { ...process.env, PYTHONUNBUFFERED: '1' },
+    });
+
+    if (restartResult.status === 0) {
+        verifyStartup();
+    } else if ((restartResult.stderr || '').toString().includes('not found')) {
+        // Daemon wasn't running before the update - start it fresh instead
+        // of reporting a restart that never had anything to restart.
+        info("Daemon wasn't running - starting it fresh...");
+        runPm2(['start', botPath, '--interpreter', pythonExe, '--name', 'lgy']);
+        verifyStartup();
+    } else {
+        console.error((restartResult.stderr || '').toString().trim());
+        console.error(
+            `\n${color.yellow}⚠${color.reset} Update installed, but restarting the daemon failed - run 'lgy restart' manually.`,
+        );
+        process.exit(1);
+    }
 } else if (cmd === 'help') {
     console.log(
         [
@@ -238,6 +290,7 @@ if (cmd === 'start') {
             '  enable     Register bot to start automatically on system boot',
             '  disable    Remove bot from system boot',
             '  setup      Run the configuration wizard (init)',
+            '  update     Check npm for a newer version and install + restart if found',
             '  help       Show this help message',
             '',
         ].join('\n'),
@@ -256,6 +309,11 @@ if (cmd === 'start') {
                 { label: 'Restart', value: 'restart', hint: 'Restart the running daemon' },
                 { label: 'Logs', value: 'logs', hint: 'View the live console logs' },
                 { label: 'Setup', value: 'setup', hint: 'Configure bot tokens and settings' },
+                {
+                    label: 'Update',
+                    value: 'update',
+                    hint: 'Check npm for a newer version and install it',
+                },
                 {
                     label: 'Enable Auto-start',
                     value: 'enable',
