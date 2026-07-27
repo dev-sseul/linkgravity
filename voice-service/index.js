@@ -702,7 +702,12 @@ function setupReceiver(connection, guildId) {
                 return;
             }
 
-            if (pcmBuffer.length < 24000) {
+            // 24000 bytes (250ms) was long enough to cut off single-syllable
+            // Korean replies ("네"/"어"/"응") before they ever reached STT -
+            // real noise/mic-bump blips are filtered upstream by the RMS/
+            // sustain checks (isSpeaking), not by duration, so this can be
+            // short without letting more noise through.
+            if (pcmBuffer.length < 9600) {
                 if (partialSent) {
                     fetch('http://127.0.0.1:18080/stt_partial_cancel', {
                         method: 'POST',
