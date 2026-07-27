@@ -68,6 +68,7 @@ class DiscordAdapter(MessengerAdapter):
 
         return IncomingMessage(
             author_id=message.author.id,
+            platform=self.platform_name,
             content=message.content,
             conversation_id=str(message.channel.id),
             conversation_ref=message.channel,

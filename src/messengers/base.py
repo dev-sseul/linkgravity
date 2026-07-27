@@ -32,6 +32,7 @@ class IncomingMessage:
     """Platform-agnostic inbound message - adapters build this, handlers never see raw platform types."""
 
     author_id: Any
+    platform: str
     content: str
     conversation_id: str
     conversation_ref: Any

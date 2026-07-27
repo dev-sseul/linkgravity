@@ -7,7 +7,8 @@ WORKSPACE_DIR = Path.home() / ".gemini" / "linkgravity"
 WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
 DATA_DIR = WORKSPACE_DIR / "data"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
-# Per-user wake-word recordings/.rpw (see EnrollmentManager); defined early so load_bot_settings' migration below can read it.
+# Per-user wake-word recordings + built .rpw reference (see EnrollmentManager).
+# Defined early so load_bot_settings' migration below can read it.
 WAKE_REF_DIR = WORKSPACE_DIR / "wake_refs"
 WAKE_REF_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -15,6 +16,8 @@ LGY_CONFIG_FILE = WORKSPACE_DIR / "lgy.json"
 
 DEFAULT_LGY_CONFIG = {
     "discord_token": "",
+    "telegram_token": "",
+    "telegram_allowed_user_ids": "",
     "session_scopes": [],
     "allowed_user_ids": "",
     # user_id (str) -> registered word, one per person (see EnrollmentManager._commit_enrollment).
@@ -73,6 +76,7 @@ logger = init_logger(WORKSPACE_DIR)
 
 
 DISCORD_TOKEN = bot_settings.get("discord_token", "")
+TELEGRAM_TOKEN = bot_settings.get("telegram_token", "")
 
 
 def _parse_session_scopes(raw_scopes) -> dict:
@@ -96,6 +100,7 @@ def _parse_session_scopes(raw_scopes) -> dict:
 
 SESSION_SCOPES = _parse_session_scopes(bot_settings.get("session_scopes"))
 ALLOWED_IDS = set(int(x) for x in bot_settings.get("allowed_user_ids", "").split(",") if x.strip())
+TELEGRAM_ALLOWED_IDS = set(int(x) for x in bot_settings.get("telegram_allowed_user_ids", "").split(",") if x.strip())
 TTS_VOICE = bot_settings.get("tts_voice", "ko-KR-SunHiNeural")
 
 
@@ -135,5 +140,6 @@ AGY_BIN = os.getenv("AGY_BIN_PATH", str(Path.home() / ".local/bin/agy"))
 session_manager = SessionManager(DATA_DIR)
 
 
-def allowed(user_id: int) -> bool:
-    return not ALLOWED_IDS or user_id in ALLOWED_IDS
+def allowed(user_id: int, platform: str = "discord") -> bool:
+    ids = TELEGRAM_ALLOWED_IDS if platform == "telegram" else ALLOWED_IDS
+    return not ids or user_id in ids
