@@ -7,6 +7,7 @@ from core.agy_runner import (
     generate_thread_title,
     get_current_model,
     run_agy,
+    update_agy_conversation_title,
 )
 from services.audio_service import stt, tts
 from services.discord_helpers import (
@@ -23,6 +24,7 @@ __all__ = [
     "agy_send_message",
     "get_current_model",
     "generate_thread_title",
+    "update_agy_conversation_title",
     "active_processes",
     "agy_start_lock",
     "tts",

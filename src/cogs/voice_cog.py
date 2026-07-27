@@ -7,6 +7,7 @@ from discord import app_commands
 from discord.ext import commands, tasks
 
 from config import allowed, logger
+from messengers.registry import get_adapter
 
 from .voice.enrollment import EnrollmentManager
 from .voice.stt_session import SttSessionTracker
@@ -546,6 +547,12 @@ class VoiceCog(commands.Cog):
                         sess["status"] = "active"
                         self.session_manager.set_session(str(thread_id), sess)
                         conv_id = new_conv_id
+
+                        from utils.utils import generate_thread_title, update_agy_conversation_title
+
+                        new_title = await generate_thread_title(text_to_ai, raw_ans)
+                        await get_adapter().rename_conversation(thread, new_title)
+                        await update_agy_conversation_title(new_conv_id, new_title)
                     else:
                         logger.debug("Voice: calling agy_send...")
                         raw_ans = await self.agy_send(

@@ -376,3 +376,35 @@ async def generate_thread_title(user_input: str, response: str) -> str:
     except Exception as e:
         logger.warning(f"AI thread-title generation failed, falling back to raw input: {e}")
         return fallback
+
+
+async def update_agy_conversation_title(conv_id: str, title: str) -> None:
+    """Antigravity CLI keeps its own conversation list (conversation_summaries.db,
+    a `title` column keyed by conversation_id) - without this, it shows its own
+    auto-generated name while the Discord thread shows ours, and the two drift
+    apart even though they're the same conversation."""
+    if not conv_id:
+        return
+
+    import sqlite3
+    from pathlib import Path
+
+    db_path = Path.home() / ".gemini/antigravity-cli/conversation_summaries.db"
+    if not db_path.exists():
+        return
+
+    def _update():
+        conn = sqlite3.connect(str(db_path), timeout=5)
+        try:
+            conn.execute(
+                "UPDATE conversation_summaries SET title = ? WHERE conversation_id = ?",
+                (title, conv_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    try:
+        await asyncio.get_running_loop().run_in_executor(None, _update)
+    except Exception as e:
+        logger.warning(f"Failed to sync title into agy's conversation_summaries.db for {conv_id}: {e}")

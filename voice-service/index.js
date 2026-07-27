@@ -271,22 +271,8 @@ function loadRustpotterModule() {
 // userId -> { rustpotter, samplesPerFrame, residual: Int16Array }
 const detectorCache = new Map();
 
-// The real pass/fail cutoff for a wake-word match. This has to be a
-// genuine, meaningful threshold, not a tuning knob to set near-zero:
-// rustpotter's confirmation logic re-arms its countdown EVERY time a
-// new "candidate" clears the threshold (detector.rs's run_detection:
-// `self.detection_countdown = self.max_mfcc_frames / 2` runs again on
-// every qualifying frame). With this set to 0.05 during earlier
-// debugging, silence and noise cleared it just as easily as real
-// speech, so the countdown never ran out and nothing was ever
-// confirmed no matter how much silence padding was fed afterward.
-// Verified against a native Rust reproduction of this exact detector
-// before settling on 0.5 (matches rustpotter's own default, and what
-// rustpotter-cli scored real captured audio at: 0.55-0.73). Nudged
-// down to 0.45 after real-world use kept narrowly missing genuine
-// wake-word hits (0.44-0.47 range) - still far above the near-zero
-// range that broke confirmation entirely above.
-const WAKE_MATCH_THRESHOLD = 0.45;
+// Wake-word confirm cutoff - must stay well above ~0.05 (rustpotter's countdown never finalizes if noise/silence clears it too); 0.4 chosen after live use kept narrowly missing genuine hits just under 0.5.
+const WAKE_MATCH_THRESHOLD = 0.4;
 
 async function getDetectorForUser(userId) {
     if (detectorCache.has(userId)) return detectorCache.get(userId);
@@ -664,15 +650,7 @@ function setupReceiver(connection, guildId) {
                     bestDiagScoreName = diagPaddingDetection.getName();
                 }
 
-                // The real pass/fail decision - see WAKE_MATCH_THRESHOLD's
-                // comment for why this has to be a meaningful cutoff.
-                // bestDiagScore comes from the separate diagnostic
-                // instance above (see its comment in getDetectorForUser) -
-                // a much looser config (threshold 0.01, min_scores 1), so
-                // its number is on a different scale and NOT directly
-                // comparable to WAKE_MATCH_THRESHOLD. It exists only so a
-                // rejected utterance still shows some sense of "how close,"
-                // since the real detector often reports a flat 0.000.
+                // Real pass/fail uses bestWakeScore; bestDiagScore is a separate, much looser detector shown only for "how close" - not on the same scale, not comparable to WAKE_MATCH_THRESHOLD.
                 wakeConfirmed = bestWakeScore >= WAKE_MATCH_THRESHOLD;
                 matchedWakeWord = wakeConfirmed ? bestWakeScoreName : null;
                 console.log(
@@ -710,11 +688,7 @@ function setupReceiver(connection, guildId) {
                 return;
             }
 
-            // 24000 bytes (250ms) was long enough to cut off single-syllable
-            // Korean replies ("네"/"어"/"응") before they ever reached STT -
-            // real noise/mic-bump blips are filtered upstream by the RMS/
-            // sustain checks (isSpeaking), not by duration, so this can be
-            // short without letting more noise through.
+            // Was 24000 (250ms) - cut off short Korean replies ("네"/"어"/"응"); noise is filtered upstream by isSpeaking's RMS/sustain check, not by duration.
             if (pcmBuffer.length < 9600) {
                 if (partialSent) {
                     fetch('http://127.0.0.1:18080/stt_partial_cancel', {
@@ -1049,11 +1023,7 @@ process.on('uncaughtException', (err) => {
     process.exit(1);
 });
 
-// lgy stop/restart (via PM2) sends SIGTERM to this process. Without this,
-// it just dies mid-connection - Discord doesn't get a clean leave, so the
-// bot shows as still connected to the voice channel until its session
-// eventually times out, and /join or /leave against a fresh process have
-// no record of it to fix (connections is empty again after a restart).
+// Without this, SIGTERM (lgy stop/restart) kills the process mid-connection and Discord never gets a clean leave.
 function shutdownGracefully() {
     console.log(`[Shutdown] Disconnecting from ${connections.size} active voice connection(s)...`);
     for (const connection of connections.values()) {

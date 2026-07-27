@@ -16,6 +16,7 @@ from utils.utils import (
     generate_thread_title,
     handle_image_attachments,
     stt,
+    update_agy_conversation_title,
 )
 
 
@@ -68,6 +69,7 @@ async def handle_pending_session(
             response_text = result_text
             new_title = await generate_thread_title(content, response_text)
             await adapter.rename_conversation(thread, new_title)
+            await update_agy_conversation_title(new_conv_id, new_title)
 
             response_text = await render_thought_process(new_conv_id, ctx, response_text, thread)
 
