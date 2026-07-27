@@ -142,8 +142,8 @@ class TTSStreamManager:
         session_manager.set_tts_task(self.thread_id, new_task)
 
 
-async def stream_thinking_latest(bot, thread: Any, context_dict: dict, queue: asyncio.Queue):
-    cog = bot.get_cog("VoiceCog")
+async def stream_thinking_latest(bot, thread: Any, thread_id: str, context_dict: dict, queue: asyncio.Queue):
+    cog = bot.get_cog("VoiceCog") if bot else None
     is_voice = bool(
         cog
         and hasattr(thread, "guild")
@@ -152,7 +152,7 @@ async def stream_thinking_latest(bot, thread: Any, context_dict: dict, queue: as
     )
 
     ui_mgr = StreamUpdater(thread, context_dict)
-    tts_mgr = TTSStreamManager(thread.id, thread.guild.id if hasattr(thread, "guild") else None, cog, is_voice)
+    tts_mgr = TTSStreamManager(thread_id, thread.guild.id if hasattr(thread, "guild") else None, cog, is_voice)
 
     try:
         while True:
@@ -180,14 +180,14 @@ async def stream_thinking_latest(bot, thread: Any, context_dict: dict, queue: as
                 await ui_mgr.flush(force=True)
                 if context_dict is not None:
                     context_dict["final_text"] = ui_mgr.current_text.strip()
-                session_manager.remove_queue(str(thread.id))
-                _clear_current_tool(str(thread.id))
+                session_manager.remove_queue(thread_id)
+                _clear_current_tool(thread_id)
                 await tts_mgr.flush_all()
                 break
 
             if str(chunk).startswith("__CONV_ID__:"):
                 conv_id = chunk.split(":", 1)[1]
-                session_manager.update_session(str(thread.id), "conversation_id", conv_id)
+                session_manager.update_session(thread_id, "conversation_id", conv_id)
                 continue
 
             if chunk == "__SPLIT__":
@@ -201,6 +201,6 @@ async def stream_thinking_latest(bot, thread: Any, context_dict: dict, queue: as
             await ui_mgr.flush()
             await tts_mgr.process_chunk(chunk)
     except asyncio.CancelledError:
-        logger.debug(f"stream_thinking_latest cancelled for thread {thread.id}")
+        logger.debug(f"stream_thinking_latest cancelled for thread {thread_id}")
     except Exception as e:
         logger.exception(f"Error in stream_thinking_latest: {e}")

@@ -22,6 +22,12 @@ from utils.utils import (
 async def handle_approval_reply(incoming: IncomingMessage, session: dict, content: str, pa) -> bool:
     adapter = get_adapter()
     thread = incoming.conversation_ref
+
+    if session_manager.get_pending_approval_type_by_conv(incoming.conversation_id) == "ask_question":
+        pa.set_result(content)
+        await adapter.send_message(thread, f'✅ *Answer Received (Write in): "{content}"*')
+        return True
+
     if content.lower() in ("yes", "y", "allow", "승인"):
         pa.set_result("allow")
         await adapter.send_message(thread, f'✅ *Answer Received (Write in): "{content}"*')
@@ -54,7 +60,9 @@ async def handle_pending_session(
             start_time = time.time()
             queue = asyncio.Queue()
             session_manager.register_queue(incoming.conversation_id, queue)
-            stream_task = asyncio.create_task(stream_thinking_latest(bot, thread, context_dict=ctx, queue=queue))
+            stream_task = asyncio.create_task(
+                stream_thinking_latest(bot, thread, incoming.conversation_id, context_dict=ctx, queue=queue)
+            )
 
             cwd = session.get("cwd")
             model = session.get("model")
@@ -93,7 +101,9 @@ async def handle_existing_session(
             start_time = time.time()
             queue = asyncio.Queue()
             session_manager.register_queue(incoming.conversation_id, queue)
-            stream_task = asyncio.create_task(stream_thinking_latest(bot, thread, context_dict=ctx, queue=queue))
+            stream_task = asyncio.create_task(
+                stream_thinking_latest(bot, thread, incoming.conversation_id, context_dict=ctx, queue=queue)
+            )
             result_text = await agy_send_message(
                 conv_id,
                 agy_content,
