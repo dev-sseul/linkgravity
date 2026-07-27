@@ -449,9 +449,21 @@ class VoiceCog(commands.Cog):
 
             self.logger.debug(f"STT recognized: {text} -> AI: {text_to_ai}")
 
-            # A stale in-flight turn for this guild - cancel it, kill its agy process, stop playback.
+            sess = self.session_manager.get_session(str(thread_id))
+            if not sess:
+                sess = {"status": "pending", "user_id": str(user_id)}
+                self.session_manager.set_session(str(thread_id), sess)
+
+            conv_id = sess.get("conversation_id")
+            pa = self.session_manager.get_pending_approval_by_conv(conv_id) if conv_id else None
+            has_pending_approval = bool(conv_id and pa and not pa.done())
+
+            # A stale in-flight turn for this guild - cancel it, kill its agy process, stop
+            # playback. Skipped when a tool/question approval is pending: that turn is the one
+            # waiting on this very utterance as its answer, so cancelling here would kill the
+            # agy process before the "yes"/"no" below ever reaches it.
             prev_task = self._active_turns.get(str(guild_id))
-            if prev_task and not prev_task.done():
+            if prev_task and not prev_task.done() and not has_pending_approval:
                 prev_task.cancel()
 
                 from core.agy_runner import stop_active_process
@@ -490,15 +502,7 @@ class VoiceCog(commands.Cog):
                         await self._play_audio(str(guild_id), audio_reply)
                 return
 
-            sess = self.session_manager.get_session(str(thread_id))
-            if not sess:
-                sess = {"status": "pending", "user_id": str(user_id)}
-                self.session_manager.set_session(str(thread_id), sess)
-
-            conv_id = sess.get("conversation_id")
-            pa = self.session_manager.get_pending_approval_by_conv(conv_id) if conv_id else None
-
-            if conv_id and pa and not pa.done():
+            if has_pending_approval:
                 app_type = self.session_manager.get_pending_approval_type_by_conv(conv_id)
                 if app_type == "ask_question":
                     pa.set_result(text)
