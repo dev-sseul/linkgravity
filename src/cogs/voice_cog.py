@@ -175,22 +175,19 @@ class VoiceCog(commands.Cog):
         guild_id = interaction.guild_id
 
         wake_word_map = self.bot_settings.get("wake_words") or {}
-        has_wake_word = bool(wake_word_map)
+        own_word = wake_word_map.get(str(interaction.user.id))
         active_timer = self.bot_settings.get("active_timer", 60)
 
-        if has_wake_word:
-            # dict.fromkeys dedupes while keeping first-registered order (each user has their own word).
-            ww_list = [f"`{w.strip()}`" for w in dict.fromkeys(wake_word_map.values()) if w.strip()]
-            ww_str = ", ".join(ww_list[:-1]) + f", or {ww_list[-1]}" if len(ww_list) > 1 else ww_list[0]
+        if own_word:
             msg = (
                 f"🎤 Connected to `{vc_chan.name}`.\n"
-                f"💡 Say {ww_str} to activate me. Once awake, I'll keep listening for {active_timer} seconds after each interaction.\n"
+                f"💡 Say `{own_word}` to activate me. Once awake, I'll keep listening for {active_timer} seconds after each interaction.\n"
                 f"⚙️ You can customize settings using `/sound`."
             )
         else:
             msg = (
                 f"🎤 Connected to `{vc_chan.name}`.\n"
-                f"🎙️ No wake word is set up yet, so I can't hear you yet - run `/sound wake_word:<word>` "
+                f"🎙️ You haven't set up a wake word yet, so I can't hear you - run `/sound wake_word:<word>` "
                 f"and say your chosen word a few times to register it in your voice."
             )
         await interaction.response.send_message(msg)
@@ -211,17 +208,17 @@ class VoiceCog(commands.Cog):
                 if data.get("success"):
                     self._voice_state[str(guild_id)] = interaction.channel_id
 
-                    if has_wake_word:
+                    if own_word:
                         if self.bot_settings.get("tts_enabled", True):
                             welcome_audio = await self.tts("Yes, I am listening.")
                             if welcome_audio:
-                                await self._play_audio(str(guild_id), welcome_audio)
+                                await self._play_audio(str(guild_id), welcome_audio, suppress_active_window=True)
                     elif self.bot_settings.get("tts_enabled", True):
                         prompt_audio = await self.tts(
                             "No wake word is set up yet. Please use the sound command to set one."
                         )
                         if prompt_audio:
-                            await self._play_audio(str(guild_id), prompt_audio)
+                            await self._play_audio(str(guild_id), prompt_audio, suppress_active_window=True)
                 else:
                     await interaction.channel.send(f"⚠️ Node.js integration failed: {data.get('error')}")
         except aiohttp.ClientConnectorError:
