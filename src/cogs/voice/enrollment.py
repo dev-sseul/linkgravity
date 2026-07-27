@@ -263,7 +263,7 @@ class EnrollmentManager:
         session["pending_sample"] = audio_bytes
         session["awaiting_confirmation"] = True
 
-        await self._play_audio(session["guild_id"], audio_bytes, suppress_active_window=True)
+        await self._play_audio(session["guild_id"], self._trim_silence_wav(audio_bytes), suppress_active_window=True)
         await self._update_status(
             session,
             f"🔊 **{step}/{session['needed']}** captured - keep it, or re-record if it's noisy?",
