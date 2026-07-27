@@ -14,10 +14,7 @@ async def handle_stt_input(request):
             asyncio.create_task(cog.handle_stt_input(data))
         return web.json_response({"success": True})
     except Exception as e:
-        import traceback
-
-        logger.error(f"STT API error: {e}")
-        traceback.print_exc()
+        logger.exception(f"STT API error: {e}")
         return web.json_response({"error": str(e)}, status=500)
 
 
@@ -36,7 +33,7 @@ async def handle_tts_finished(request):
             cog.mark_tts_finished(str(guild_id))
         return web.json_response({"success": True})
     except Exception as e:
-        logger.error(f"tts_finished API error: {e}")
+        logger.exception(f"tts_finished API error: {e}")
         return web.json_response({"error": str(e)}, status=500)
 
 
@@ -53,7 +50,7 @@ async def handle_stt_partial(request):
             asyncio.create_task(cog.handle_stt_partial(data))
         return web.json_response({"success": True})
     except Exception as e:
-        logger.error(f"stt_partial API error: {e}")
+        logger.exception(f"stt_partial API error: {e}")
         return web.json_response({"error": str(e)}, status=500)
 
 
@@ -71,7 +68,7 @@ async def handle_stt_partial_cancel(request):
             asyncio.create_task(cog.cancel_stt_partial(str(guild_id)))
         return web.json_response({"success": True})
     except Exception as e:
-        logger.error(f"stt_partial_cancel API error: {e}")
+        logger.exception(f"stt_partial_cancel API error: {e}")
         return web.json_response({"error": str(e)}, status=500)
 
 
@@ -90,5 +87,5 @@ async def handle_enroll_sample(request):
             asyncio.create_task(cog.handle_enroll_sample(user_id, audio_bytes))
         return web.json_response({"success": True})
     except Exception as e:
-        logger.error(f"enroll_sample API error: {e}")
+        logger.exception(f"enroll_sample API error: {e}")
         return web.json_response({"error": str(e)}, status=500)

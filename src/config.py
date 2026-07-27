@@ -7,8 +7,7 @@ WORKSPACE_DIR = Path.home() / ".gemini" / "linkgravity"
 WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
 DATA_DIR = WORKSPACE_DIR / "data"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
-# Per-user wake-word recordings + built .rpw reference (see EnrollmentManager).
-# Defined early so load_bot_settings' migration below can read it.
+# Per-user wake-word recordings/.rpw (see EnrollmentManager); defined early so load_bot_settings' migration below can read it.
 WAKE_REF_DIR = WORKSPACE_DIR / "wake_refs"
 WAKE_REF_DIR.mkdir(parents=True, exist_ok=True)
 

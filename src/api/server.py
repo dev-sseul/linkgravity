@@ -23,7 +23,7 @@ async def setup_webhook_server(bot):
     app = web.Application(client_max_size=50 * 1024 * 1024)
     app["bot"] = bot
 
-    from api.ui_routes import handle_approve_request, handle_mcp_ask, handle_mcp_send_channel
+    from api.ui_routes import handle_approve_request
     from api.voice_routes import (
         handle_enroll_sample,
         handle_stt_input,
@@ -33,8 +33,6 @@ async def setup_webhook_server(bot):
     )
 
     app.router.add_post("/approve", handle_approve_request)
-    app.router.add_post("/mcp_ask", handle_mcp_ask)
-    app.router.add_post("/mcp_send_channel", handle_mcp_send_channel)
     app.router.add_post("/stt_input", handle_stt_input)
     app.router.add_post("/tts_finished", handle_tts_finished)
     app.router.add_post("/stt_partial", handle_stt_partial)
@@ -45,4 +43,4 @@ async def setup_webhook_server(bot):
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", 18080)
     await site.start()
-    logger.info("Webhook / MCP / STT Server started on port 18080")
+    logger.info("Webhook / STT Server started on port 18080")

@@ -74,7 +74,7 @@ class VoiceCog(commands.Cog):
             if count > 0:
                 self.logger.debug(f"Garbage Collector: Deleted {count} old TTS audio files.")
         except Exception as e:
-            self.logger.error(f"Garbage Collector error: {e}")
+            self.logger.exception(f"Garbage Collector error: {e}")
 
     async def active_times_autocomplete(
         self, interaction: discord.Interaction, current: str
@@ -459,10 +459,7 @@ class VoiceCog(commands.Cog):
             pa = self.session_manager.get_pending_approval_by_conv(conv_id) if conv_id else None
             has_pending_approval = bool(conv_id and pa and not pa.done())
 
-            # A stale in-flight turn for this guild - cancel it, kill its agy process, stop
-            # playback. Skipped when a tool/question approval is pending: that turn is the one
-            # waiting on this very utterance as its answer, so cancelling here would kill the
-            # agy process before the "yes"/"no" below ever reaches it.
+            # Cancels a stale in-flight turn - skipped when an approval is pending, since that's the turn waiting on this utterance as its answer, not a new command.
             prev_task = self._active_turns.get(str(guild_id))
             if prev_task and not prev_task.done() and not has_pending_approval:
                 prev_task.cancel()

@@ -37,7 +37,7 @@ async def tts(text: str, voice: str = None) -> bytes | None:
         os.unlink(tmp)
         return data
     except Exception as e:
-        logger.error(f"TTS error: {e}")
+        logger.exception(f"TTS error: {e}")
         return None
 
 
@@ -63,5 +63,5 @@ async def stt(audio_bytes: bytes) -> str | None:
         result = await asyncio.to_thread(_transcribe)
         return result.strip() if result else None
     except Exception as e:
-        logger.error(f"STT internal error: {e}")
+        logger.exception(f"STT internal error: {e}")
         return None

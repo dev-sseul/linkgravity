@@ -19,7 +19,7 @@ async def handle_image_attachments(message: discord.Message) -> list[str]:
             dest.write_bytes(data)
             saved_paths.append(str(dest))
         except Exception as e:
-            logger.error(f"Image save failed: {e}")
+            logger.exception(f"Image save failed: {e}")
     return saved_paths
 
 

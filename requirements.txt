@@ -9,5 +9,3 @@ SpeechRecognition>=3.17.0
 schedule==1.2.1
 jamo>=0.4.1
 loguru>=0.7.0
-mcp>=1.0.0
-requests>=2.31.0
