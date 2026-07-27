@@ -9,9 +9,34 @@ this interface; see VoiceCapable.
 """
 
 from abc import ABC, abstractmethod
+from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
-from typing import Any, Protocol, runtime_checkable
+from dataclasses import dataclass, field
+from typing import Any
+
+
+@dataclass
+class IncomingAttachment:
+    """A file on an inbound message; reader defers fetching bytes until needed."""
+
+    filename: str
+    content_type: str | None
+    reader: Callable[[], Awaitable[bytes]]
+
+    async def read(self) -> bytes:
+        return await self.reader()
+
+
+@dataclass
+class IncomingMessage:
+    """Platform-agnostic inbound message - adapters build this, handlers never see raw platform types."""
+
+    author_id: Any
+    content: str
+    conversation_id: str
+    conversation_ref: Any
+    attachments: list[IncomingAttachment] = field(default_factory=list)
+    add_reaction: Callable[[str], Awaitable[None]] | None = None
 
 
 @dataclass
@@ -42,6 +67,11 @@ class PromptHandle(ABC):
 
 class MessengerAdapter(ABC):
     platform_name: str = "unknown"
+
+    @abstractmethod
+    def to_incoming_message(self, raw_event: Any) -> IncomingMessage | None:
+        """Converts a native platform event to IncomingMessage, or None to ignore it (bot/system messages)."""
+        raise NotImplementedError
 
     @abstractmethod
     async def send_message(self, conversation_ref: Any, text: str) -> Any:
@@ -98,8 +128,15 @@ class MessengerAdapter(ABC):
         return isinstance(self, VoiceCapable)
 
 
-@runtime_checkable
-class VoiceCapable(Protocol):
-    async def join_voice(self, guild_ref: Any, channel_ref: Any) -> None: ...
-    async def leave_voice(self, guild_ref: Any) -> None: ...
-    async def play_tts(self, guild_ref: Any, audio_bytes: bytes) -> None: ...
+class VoiceCapable(ABC):
+    @abstractmethod
+    async def join_voice(self, guild_ref: Any, channel_ref: Any) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def leave_voice(self, guild_ref: Any) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def play_tts(self, guild_ref: Any, audio_bytes: bytes) -> None:
+        raise NotImplementedError

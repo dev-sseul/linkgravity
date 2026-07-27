@@ -2,9 +2,8 @@ import asyncio
 import time
 from datetime import datetime
 
-import discord
-
 from config import session_manager
+from messengers.base import IncomingMessage
 from messengers.registry import get_adapter
 from services.response import render_thought_process, send_agy_response
 from services.streaming import stream_thinking_latest
@@ -20,10 +19,9 @@ from utils.utils import (
 )
 
 
-async def handle_approval_reply(
-    message: discord.Message, thread: discord.Thread, session: dict, content: str, pa
-) -> bool:
+async def handle_approval_reply(incoming: IncomingMessage, session: dict, content: str, pa) -> bool:
     adapter = get_adapter()
+    thread = incoming.conversation_ref
     if content.lower() in ("yes", "y", "allow", "승인"):
         pa.set_result("allow")
         await adapter.send_message(thread, f'✅ *Answer Received (Write in): "{content}"*')
@@ -38,29 +36,30 @@ async def handle_approval_reply(
         return True
     elif content.lower() in ("clear", "reset"):
         await adapter.send_message(thread, "🧹 Conversation context cleared.")
-        old_sess = session_manager.remove_session(str(thread.id))
+        old_sess = session_manager.remove_session(incoming.conversation_id)
         if old_sess:
-            session_manager.set_session(str(thread.id), old_sess)
+            session_manager.set_session(incoming.conversation_id, old_sess)
         return True
     return False
 
 
 async def handle_pending_session(
-    bot, thread: discord.Thread, session: dict, agy_content: str, content: str, image_paths: list
+    bot, incoming: IncomingMessage, session: dict, agy_content: str, content: str, image_paths: list
 ):
     adapter = get_adapter()
+    thread = incoming.conversation_ref
     try:
         async with adapter.typing(thread):
             ctx = {"status_msg": None}
             start_time = time.time()
             queue = asyncio.Queue()
-            session_manager.register_queue(str(thread.id), queue)
+            session_manager.register_queue(incoming.conversation_id, queue)
             stream_task = asyncio.create_task(stream_thinking_latest(bot, thread, context_dict=ctx, queue=queue))
 
             cwd = session.get("cwd")
             model = session.get("model")
             result_text, new_conv_id = await agy_new_conversation(
-                agy_content, model=model, stream_queue=queue, thread_id=str(thread.id), cwd=cwd
+                agy_content, model=model, stream_queue=queue, thread_id=incoming.conversation_id, cwd=cwd
             )
 
             await queue.put(("__END__", True))
@@ -84,22 +83,23 @@ async def handle_pending_session(
 
 
 async def handle_existing_session(
-    bot, thread: discord.Thread, session: dict, conv_id: str, agy_content: str, image_paths: list
+    bot, incoming: IncomingMessage, session: dict, conv_id: str, agy_content: str, image_paths: list
 ):
     adapter = get_adapter()
+    thread = incoming.conversation_ref
     try:
         async with adapter.typing(thread):
             ctx = {"status_msg": None}
             start_time = time.time()
             queue = asyncio.Queue()
-            session_manager.register_queue(str(thread.id), queue)
+            session_manager.register_queue(incoming.conversation_id, queue)
             stream_task = asyncio.create_task(stream_thinking_latest(bot, thread, context_dict=ctx, queue=queue))
             result_text = await agy_send_message(
                 conv_id,
                 agy_content,
                 model=session.get("model"),
                 stream_queue=queue,
-                thread_id=str(thread.id),
+                thread_id=incoming.conversation_id,
                 cwd=session.get("cwd"),
             )
             await queue.put(("__END__", True))
@@ -112,14 +112,14 @@ async def handle_existing_session(
         cleanup_images(image_paths)
 
 
-async def handle_thread_reply(bot, message: discord.Message):
-    thread = message.channel
-    session = session_manager.get_session(str(thread.id))
+async def handle_thread_reply(bot, incoming: IncomingMessage):
+    session = session_manager.get_session(incoming.conversation_id)
     if not session:
         return
 
     adapter = get_adapter()
-    content = message.content.strip()
+    thread = incoming.conversation_ref
+    content = incoming.content.strip()
     if content.startswith("/new"):
         await adapter.send_message(
             thread,
@@ -127,10 +127,11 @@ async def handle_thread_reply(bot, message: discord.Message):
         )
         return
 
-    for att in message.attachments:
+    for att in incoming.attachments:
         ct = att.content_type or ""
         if "audio" in ct or att.filename.endswith((".ogg", ".mp3", ".m4a", ".wav")):
-            await message.add_reaction("🎤")
+            if incoming.add_reaction:
+                await incoming.add_reaction("🎤")
             audio_bytes = await att.read()
             text = await stt(audio_bytes)
             if text:
@@ -138,9 +139,10 @@ async def handle_thread_reply(bot, message: discord.Message):
                 await adapter.send_message(thread, f'🎤 *Speech Recognized: "{text}"*')
             break
 
-    image_paths = await handle_image_attachments(message)
+    image_paths = await handle_image_attachments(incoming.attachments)
     if image_paths:
-        await message.add_reaction("📎")
+        if incoming.add_reaction:
+            await incoming.add_reaction("📎")
         await adapter.send_message(thread, f"📎 *{len(image_paths)} file(s) attached*")
 
     if not content and not image_paths:
@@ -153,16 +155,16 @@ async def handle_thread_reply(bot, message: discord.Message):
     pa = session_manager.get_pending_approval_by_conv(conv_id) if conv_id else None
 
     if conv_id and pa and not pa.done():
-        handled = await handle_approval_reply(message, thread, session, content, pa)
+        handled = await handle_approval_reply(incoming, session, content, pa)
         if handled:
             return
 
     if not conv_id:
         if session.get("status") == "pending":
-            await handle_pending_session(bot, thread, session, agy_content, content, image_paths)
+            await handle_pending_session(bot, incoming, session, agy_content, content, image_paths)
             return
         else:
             await adapter.send_message(thread, "⚠️ Session ID not found. Start a new session with `/new`.")
             return
 
-    await handle_existing_session(bot, thread, session, conv_id, agy_content, image_paths)
+    await handle_existing_session(bot, incoming, session, conv_id, agy_content, image_paths)

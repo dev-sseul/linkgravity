@@ -9,6 +9,8 @@ import discord
 
 from config import logger
 from messengers.base import (
+    IncomingAttachment,
+    IncomingMessage,
     MessengerAdapter,
     PromptHandle,
     ScopeOption,
@@ -46,6 +48,32 @@ class DiscordAdapter(MessengerAdapter):
 
     def __init__(self, bot: discord.Client):
         self.bot = bot
+
+    # -- inbound -------------------------------------------------------------
+
+    def to_incoming_message(self, raw_event: discord.Message) -> IncomingMessage | None:
+        message = raw_event
+        if message.type not in (discord.MessageType.default, discord.MessageType.reply):
+            return None
+        if message.author.bot:
+            return None
+
+        attachments = [
+            IncomingAttachment(filename=att.filename, content_type=att.content_type, reader=att.read)
+            for att in message.attachments
+        ]
+
+        async def add_reaction(emoji: str) -> None:
+            await message.add_reaction(emoji)
+
+        return IncomingMessage(
+            author_id=message.author.id,
+            content=message.content,
+            conversation_id=str(message.channel.id),
+            conversation_ref=message.channel,
+            attachments=attachments,
+            add_reaction=add_reaction,
+        )
 
     # -- plain messaging ---------------------------------------------------
 

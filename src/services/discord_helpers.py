@@ -3,14 +3,13 @@ import string
 import uuid
 from pathlib import Path
 
-import discord
-
 from config import TMP_FILE_DIR, logger
+from messengers.base import IncomingAttachment
 
 
-async def handle_image_attachments(message: discord.Message) -> list[str]:
+async def handle_image_attachments(attachments: list[IncomingAttachment]) -> list[str]:
     saved_paths = []
-    for att in message.attachments:
+    for att in attachments:
         ext = Path(att.filename).suffix.lower()
         filename = f"{uuid.uuid4().hex}{ext or '.tmp'}"
         dest = TMP_FILE_DIR / filename
@@ -19,7 +18,7 @@ async def handle_image_attachments(message: discord.Message) -> list[str]:
             dest.write_bytes(data)
             saved_paths.append(str(dest))
         except Exception as e:
-            logger.exception(f"Image save failed: {e}")
+            logger.error(f"Image save failed: {e}")
     return saved_paths
 
 

@@ -1,16 +1,13 @@
-import discord
-
 from config import allowed
 from handlers.thread_reply import handle_thread_reply
+from messengers.registry import get_adapter
 
 
-async def handle_message(bot, message: discord.Message):
-    if message.type not in (discord.MessageType.default, discord.MessageType.reply):
+async def handle_message(bot, raw_event):
+    incoming = get_adapter().to_incoming_message(raw_event)
+    if incoming is None:
         return
-    if message.author.bot:
-        return
-    if not allowed(message.author.id):
+    if not allowed(incoming.author_id):
         return
 
-    if isinstance(message.channel, discord.Thread):
-        await handle_thread_reply(bot, message)
+    await handle_thread_reply(bot, incoming)
