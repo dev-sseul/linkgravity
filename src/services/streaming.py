@@ -11,12 +11,19 @@ from utils.utils import clean_ansi
 
 
 def _clear_current_tool(thread_id: str):
-    """Removes the "current_tool" marker set by api/ui_routes.py while a
-    tool call is being approved - without this, the bot's presence status
-    stays stuck on the last tool after the turn finishes."""
+    """Removes the "current_tool"/"pending_approval_tool" markers set by
+    api/ui_routes.py while a tool call is being approved/run - without
+    this, the bot's presence status stays stuck on the last tool after
+    the turn finishes."""
     session = session_manager.get_session(thread_id)
-    if session and "current_tool" in session:
-        del session["current_tool"]
+    if not session:
+        return
+    changed = False
+    for key in ("current_tool", "pending_approval_tool"):
+        if key in session:
+            del session[key]
+            changed = True
+    if changed:
         session_manager.set_session(thread_id, session)
 
 

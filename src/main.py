@@ -104,8 +104,14 @@ async def status_updater_task():
             else:
                 first_t_id = session_manager.get_active_queue_keys()[0]
                 sess = session_manager.get_session(first_t_id) or {}
+                pending_tool = sess.get("pending_approval_tool")
                 tool_name = sess.get("current_tool")
-                full_status = _status_text_for_tool(tool_name) if tool_name else "🧠 Thinking..."
+                if pending_tool:
+                    full_status = "⏳ Waiting for approval..."
+                elif tool_name:
+                    full_status = _status_text_for_tool(tool_name)
+                else:
+                    full_status = "🧠 Thinking..."
 
             if full_status != last_status:
                 logger.debug(f"Status updating to: {full_status}")

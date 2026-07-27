@@ -112,10 +112,12 @@ async def handle_approve_request(request):
                     target_thread_id = thread_id_str
                     break
 
-        if target_thread_id and session_manager.get_session(target_thread_id):
-            session_manager.update_session(target_thread_id, "current_tool", tool_name)
+        def _set_tool_status(key: str):
+            if target_thread_id and session_manager.get_session(target_thread_id):
+                session_manager.update_session(target_thread_id, key, tool_name)
 
         if "ask_question" in tool_name:
+            _set_tool_status("current_tool")  # no separate approval phase here - it's waiting on the user either way
             if not target_thread:
                 return web.json_response({"decision": "deny", "reason": "No target thread found."})
 
@@ -223,6 +225,7 @@ async def handle_approve_request(request):
                     return await prompt.send(target_thread)
 
                 await send_ordered(target_thread_id, _send_bash_prompt)
+                _set_tool_status("pending_approval_tool")
 
                 decision = await future
                 session_manager.clear_pending_approval(approval_key)
@@ -232,8 +235,13 @@ async def handle_approve_request(request):
                 if decision == "reject":
                     return web.json_response({"decision": "reject"})
 
+                _set_tool_status("current_tool")
+
             if target_thread and tool_msg_text and not prompted:
                 await send_ordered(target_thread_id, lambda: adapter.send_message(target_thread, tool_msg_formatted))
+
+            if not prompted:
+                _set_tool_status("current_tool")  # auto-allowed - runs immediately, no approval wait
 
             return allow_response(tool_name, tool_input)
 
@@ -250,6 +258,7 @@ async def handle_approve_request(request):
                     await send_ordered(
                         target_thread_id, lambda: adapter.send_message(target_thread, tool_msg_formatted)
                     )
+                _set_tool_status("current_tool")  # auto-allowed - runs immediately, no approval wait
                 return allow_response(tool_name, tool_input)
 
             approval_key = f"{conv_id}:{uuid.uuid4().hex}"
@@ -267,6 +276,7 @@ async def handle_approve_request(request):
                 return await prompt.send(target_thread)
 
             await send_ordered(target_thread_id, _send_prompt)
+            _set_tool_status("pending_approval_tool")
 
             decision = await future
             session_manager.clear_pending_approval(approval_key)
@@ -276,6 +286,7 @@ async def handle_approve_request(request):
             if decision == "reject":
                 return web.json_response({"decision": "reject"})
 
+            _set_tool_status("current_tool")
             return allow_response(tool_name, tool_input)
 
     except Exception as e:
