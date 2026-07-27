@@ -210,7 +210,7 @@ class VoiceCog(commands.Cog):
 
                     if own_word:
                         if self.bot_settings.get("tts_enabled", True):
-                            welcome_audio = await self.tts("Yes, I am listening.")
+                            welcome_audio = await self.tts("Voice connected.")
                             if welcome_audio:
                                 await self._play_audio(str(guild_id), welcome_audio, suppress_active_window=True)
                     elif self.bot_settings.get("tts_enabled", True):

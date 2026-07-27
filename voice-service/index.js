@@ -1036,6 +1036,26 @@ process.on('uncaughtException', (err) => {
     process.exit(1);
 });
 
+// lgy stop/restart (via PM2) sends SIGTERM to this process. Without this,
+// it just dies mid-connection - Discord doesn't get a clean leave, so the
+// bot shows as still connected to the voice channel until its session
+// eventually times out, and /join or /leave against a fresh process have
+// no record of it to fix (connections is empty again after a restart).
+function shutdownGracefully() {
+    console.log(`[Shutdown] Disconnecting from ${connections.size} active voice connection(s)...`);
+    for (const connection of connections.values()) {
+        try {
+            connection.destroy();
+        } catch (e) {
+            // already destroyed/disconnected - fine
+        }
+    }
+    process.exit(0);
+}
+
+process.on('SIGTERM', shutdownGracefully);
+process.on('SIGINT', shutdownGracefully);
+
 const PORT = 18081;
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`Node.js Voice API listening on port ${PORT}`);

@@ -71,6 +71,19 @@ def _status_text_for_tool(tool_name: str) -> str:
     return f"⚙️ Running {tool_name}..."
 
 
+def _voice_status_text() -> str | None:
+    """None if no guild is connected to voice right now. Otherwise reflects
+    whether any connected guild is in its post-wake-word "awake" window -
+    filling the gap between Idle and an active text session, since being
+    connected to voice and waiting for a wake word isn't really "Idle"."""
+    voice_cog = bot.get_cog("VoiceCog")
+    if not voice_cog or not voice_cog._voice_state:
+        return None
+    if any(voice_cog.stt_session.is_active(guild_id) for guild_id in voice_cog._voice_state):
+        return "👂 Awake"
+    return "💤 Asleep"
+
+
 intents = discord.Intents.default()
 intents.message_content = True
 intents.voice_states = True
@@ -87,7 +100,7 @@ async def status_updater_task():
 
             full_status = ""
             if not session_manager.has_active_queues():
-                full_status = "🟢 Idle"
+                full_status = _voice_status_text() or "🟢 Idle"
             else:
                 first_t_id = session_manager.get_active_queue_keys()[0]
                 sess = session_manager.get_session(first_t_id) or {}
@@ -177,6 +190,18 @@ async def on_ready():
     logger.info(f"✅ Bot is fully online and ready! Logged in as {bot.user}")
 
 
+def _terminate_voice_process():
+    global _voice_shutting_down
+    _voice_shutting_down = True
+    if voice_process and voice_process.poll() is None:
+        logger.debug("Terminating child Node.js voice process...")
+        voice_process.terminate()  # Node now catches this and disconnects any active voice channel cleanly
+        try:
+            voice_process.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            voice_process.kill()
+
+
 @bot.event
 async def setup_hook():
     await bot.tree.sync()
@@ -201,18 +226,7 @@ async def setup_hook():
             asyncio.create_task(_wait_for_voice_service_ready())
             asyncio.create_task(_supervise_voice_process(voice_dir))
 
-            def cleanup_voice():
-                global _voice_shutting_down
-                _voice_shutting_down = True
-                if voice_process and voice_process.poll() is None:
-                    logger.debug("Zombie prevention: Terminating child Node.js process as Python exits...")
-                    voice_process.terminate()
-                    try:
-                        voice_process.wait(timeout=3)
-                    except subprocess.TimeoutExpired:
-                        voice_process.kill()
-
-            atexit.register(cleanup_voice)
+            atexit.register(_terminate_voice_process)
         else:
             logger.warning("Voice service (index.js) not found. Skipping auto-start.")
     except Exception as e:
@@ -274,6 +288,18 @@ async def main():
         return
 
     discord.utils.setup_logging()
+
+    def _handle_sigterm():
+        logger.info("Received SIGTERM (lgy stop/restart) - disconnecting voice before exit...")
+        _terminate_voice_process()
+        asyncio.create_task(bot.close())
+
+    try:
+        import signal
+
+        asyncio.get_running_loop().add_signal_handler(signal.SIGTERM, _handle_sigterm)
+    except NotImplementedError:
+        pass  # add_signal_handler isn't supported on this platform (e.g. Windows)
 
     from messengers.discord_adapter import DiscordAdapter
     from messengers.registry import set_adapter
