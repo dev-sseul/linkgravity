@@ -379,10 +379,11 @@ async def generate_thread_title(user_input: str, response: str) -> str:
 
 
 async def update_agy_conversation_title(conv_id: str, title: str) -> None:
-    """Antigravity CLI keeps its own conversation list (conversation_summaries.db,
-    a `title` column keyed by conversation_id) - without this, it shows its own
-    auto-generated name while the Discord thread shows ours, and the two drift
-    apart even though they're the same conversation."""
+    """Antigravity CLI's own conversation list reads its display name from
+    conversation_summaries.db's `preview` column (the `title` column exists
+    but is unused/always empty - confirmed by inspecting the db directly).
+    Without this, agy shows its own auto-generated name while the Discord
+    thread shows ours, and the two drift apart for the same conversation."""
     if not conv_id:
         return
 
@@ -397,7 +398,7 @@ async def update_agy_conversation_title(conv_id: str, title: str) -> None:
         conn = sqlite3.connect(str(db_path), timeout=5)
         try:
             conn.execute(
-                "UPDATE conversation_summaries SET title = ? WHERE conversation_id = ?",
+                "UPDATE conversation_summaries SET preview = ? WHERE conversation_id = ?",
                 (title, conv_id),
             )
             conn.commit()
