@@ -2,6 +2,8 @@
 
 const { spawn, spawnSync } = require('child_process');
 const path = require('path');
+const fs = require('fs');
+const { PLATFORMS, getSettings, platformState, getSessions } = require('./platforms');
 
 // Find the absolute path to the Python bot script
 const botPath = path.join(__dirname, '..', 'src', 'main.py');
@@ -97,25 +99,22 @@ function colorizeLevel(line) {
     });
 }
 
-function runPm2LogsClean(args, showStamps = false) {
+function runPm2LogsStream(args, printLine) {
     const cp = spawn('npx', ['-y', 'pm2', ...args], { cwd: path.join(__dirname, '..') });
 
-    const printLine = (line) => {
-        if (line.trim().length === 0) return;
-        if (
-            line.includes('In-memory PM2') ||
-            line.includes('pm2 update') ||
-            line.includes('[TAILING]') ||
-            line.includes('.pm2/logs/lgy') ||
-            line.includes('In memory PM2 version') ||
-            line.includes('Local PM2 version') ||
-            line.match(/^>+ /)
-        ) {
-            return;
-        }
-        const clean = line.replace(ANSI_ESCAPE, '');
-        const displayLine = colorizeLevel(showStamps ? clean : clean.replace(TIMESTAMP_PREFIX, ''));
-        console.log(displayLine);
+    const isNoise = (line) =>
+        line.trim().length === 0 ||
+        line.includes('In-memory PM2') ||
+        line.includes('pm2 update') ||
+        line.includes('[TAILING]') ||
+        line.includes('.pm2/logs/lgy') ||
+        line.includes('In memory PM2 version') ||
+        line.includes('Local PM2 version') ||
+        line.match(/^>+ /);
+
+    const handleLine = (line) => {
+        if (isNoise(line)) return;
+        printLine(line);
     };
 
     // A line can arrive split across two 'data' events, so buffer until '\n' is seen.
@@ -125,10 +124,10 @@ function runPm2LogsClean(args, showStamps = false) {
             buffer += data.toString();
             const lines = buffer.split('\n');
             buffer = lines.pop(); // last element: '' if buffer ended in '\n', else the incomplete tail
-            for (const line of lines) printLine(line);
+            for (const line of lines) handleLine(line);
         };
         handler.flush = () => {
-            if (buffer) printLine(buffer);
+            if (buffer) handleLine(buffer);
             buffer = '';
         };
         return handler;
@@ -144,80 +143,165 @@ function runPm2LogsClean(args, showStamps = false) {
     });
 }
 
-function verifyStartup() {
-    process.stdout.write(
-        `${color.cyan}▶${color.reset} Verifying startup status (waiting for bot to come online)...`,
-    );
-
-    let cp = spawn('npx', ['-y', 'pm2', 'logs', 'lgy', '--raw', '--lines', '0'], {
-        cwd: path.join(__dirname, '..'),
+function runPm2LogsClean(args, showStamps = false) {
+    runPm2LogsStream(args, (line) => {
+        const clean = line.replace(ANSI_ESCAPE, '');
+        console.log(colorizeLevel(showStamps ? clean : clean.replace(TIMESTAMP_PREFIX, '')));
     });
+}
 
-    let timer = setTimeout(() => {
-        console.log(
-            `\n\n${color.yellow}⏳ Startup verification timed out. Run 'lgy logs' to check status manually.${color.reset}`,
+function runPm2LogsPrefixed(args) {
+    // Multiple processes tailed together - keep pm2's own "id|name |" prefix, just strip ANSI color codes.
+    runPm2LogsStream(args, (line) => console.log(line.replace(ANSI_ESCAPE, '')));
+}
+
+function verifyStartup(pm2Name = PLATFORMS.discord.pm2Name, label = PLATFORMS.discord.label) {
+    return new Promise((resolve) => {
+        process.stdout.write(
+            `${color.cyan}▶${color.reset} Verifying startup status (waiting for ${label} bot to come online)...`,
         );
-        cp.kill();
-        process.exit(1);
-    }, 15000);
 
-    const checkLog = (data) => {
-        const str = data.toString();
-        if (str.includes('Bot is fully online and ready!')) {
-            clearTimeout(timer);
+        let cp = spawn('npx', ['-y', 'pm2', 'logs', pm2Name, '--raw', '--lines', '20'], {
+            cwd: path.join(__dirname, '..'),
+        });
+
+        let timer = setTimeout(() => {
             console.log(
-                `\n${color.green}✔${color.reset} Bot successfully came online and is connected to Discord!\n`,
+                `\n\n${color.yellow}⏳ Startup verification timed out for ${label}. Run 'lgy logs ${pm2Name === PLATFORMS.discord.pm2Name ? 'discord' : 'telegram'}' to check status manually.${color.reset}`,
             );
             cp.kill();
-            process.exit(0);
-        } else if (
-            str.includes('Traceback (most recent call last):') ||
-            str.includes('Error:') ||
-            str.includes('Exception:')
-        ) {
-            clearTimeout(timer);
-            console.log(`\n\n${color.yellow}❌ Error detected during startup:${color.reset}`);
-            const errorLines = str
-                .split('\n')
-                .filter(
-                    (l) =>
-                        !l.includes('In-memory') && !l.includes('[TAILING]') && l.trim().length > 0,
-                );
-            console.log(errorLines.join('\n'));
-            cp.kill();
-            process.exit(1);
-        }
-    };
+            resolve(false);
+        }, 15000);
 
-    cp.stdout.on('data', checkLog);
-    cp.stderr.on('data', checkLog);
+        const checkLog = (data) => {
+            const str = data.toString();
+            if (str.includes('Bot is fully online and ready!')) {
+                clearTimeout(timer);
+                console.log(
+                    `\n${color.green}✔${color.reset} ${label} bot successfully came online!\n`,
+                );
+                cp.kill();
+                resolve(true);
+            } else if (
+                str.includes('Traceback (most recent call last):') ||
+                str.includes('Error:') ||
+                str.includes('Exception:')
+            ) {
+                clearTimeout(timer);
+                console.log(
+                    `\n\n${color.yellow}❌ Error detected during ${label} startup:${color.reset}`,
+                );
+                const errorLines = str
+                    .split('\n')
+                    .filter(
+                        (l) =>
+                            !l.includes('In-memory') &&
+                            !l.includes('[TAILING]') &&
+                            l.trim().length > 0,
+                    );
+                console.log(errorLines.join('\n'));
+                cp.kill();
+                resolve(false);
+            }
+        };
+
+        cp.stdout.on('data', checkLog);
+        cp.stderr.on('data', checkLog);
+    });
+}
+
+function formatUptime(pmUptimeMs) {
+    const seconds = Math.floor((Date.now() - pmUptimeMs) / 1000);
+    if (seconds < 60) return `${seconds}s`;
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return `${minutes}m`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours}h ${minutes % 60}m`;
+    const days = Math.floor(hours / 24);
+    return `${days}d ${hours % 24}h`;
+}
+
+function renderTable(headers, rows) {
+    const widths = headers.map((h, i) =>
+        Math.max(h.length, ...rows.map((r) => String(r[i]).length)),
+    );
+    const pad = (s, w) => ` ${String(s).padEnd(w)} `;
+    const sepLine = (l, m, r) => l + widths.map((w) => '─'.repeat(w + 2)).join(m) + r;
+    const rowLine = (cells) => '│' + cells.map((c, i) => pad(c, widths[i])).join('│') + '│';
+
+    const lines = [sepLine('┌', '┬', '┐'), rowLine(headers), sepLine('├', '┼', '┤')];
+    for (const row of rows) lines.push(rowLine(row));
+    lines.push(sepLine('└', '┴', '┘'));
+    return lines.join('\n');
+}
+
+// Optional platform arg after the command (e.g. `lgy logs telegram`) targets just that one; omitting it targets every enabled platform.
+function resolveTargets(argv) {
+    const maybeKey = argv[3];
+    if (maybeKey && PLATFORMS[maybeKey]) {
+        return { targets: [{ key: maybeKey, def: PLATFORMS[maybeKey] }], rest: argv.slice(4) };
+    }
+
+    const settings = getSettings();
+    const enabledKeys = Object.keys(PLATFORMS).filter((k) => platformState(k, settings).enabled);
+    if (enabledKeys.length === 0) {
+        console.error(
+            `${color.yellow}⚠${color.reset} No platform is currently enabled - run \`lgy setup\` first.`,
+        );
+        process.exit(1);
+    }
+    return {
+        targets: enabledKeys.map((k) => ({ key: k, def: PLATFORMS[k] })),
+        rest: argv.slice(3),
+    };
 }
 
 if (cmd === 'version' || cmd === '-v' || cmd === '--version') {
     const pkg = require('../package.json');
     console.log(`linkgravity v${pkg.version}`);
 } else if (cmd === 'start') {
-    info('Starting LinkGravity daemon...');
-    runPm2(['start', botPath, '--interpreter', pythonExe, '--name', 'lgy']);
-    verifyStartup();
+    const { targets } = resolveTargets(process.argv);
+    (async () => {
+        let allOk = true;
+        for (const { def } of targets) {
+            info(`Starting ${def.label} daemon...`);
+            runPm2(['start', def.scriptPath, '--interpreter', pythonExe, '--name', def.pm2Name]);
+            const ok = await verifyStartup(def.pm2Name, def.label);
+            allOk = allOk && ok;
+        }
+        process.exit(allOk ? 0 : 1);
+    })();
 } else if (cmd === 'stop') {
-    info('Stopping LinkGravity daemon...');
-    runPm2(['stop', 'lgy']);
-    success('Daemon stopped successfully.\n');
+    const { targets } = resolveTargets(process.argv);
+    for (const { def } of targets) {
+        info(`Stopping ${def.label} daemon...`);
+        runPm2(['stop', def.pm2Name]);
+        success(`${def.label} daemon stopped successfully.\n`);
+    }
 } else if (cmd === 'restart') {
-    info('Restarting LinkGravity daemon...');
-    runPm2(['restart', 'lgy', '--update-env']);
-    verifyStartup();
+    const { targets } = resolveTargets(process.argv);
+    (async () => {
+        let allOk = true;
+        for (const { def } of targets) {
+            info(`Restarting ${def.label} daemon...`);
+            runPm2(['restart', def.pm2Name, '--update-env']);
+            const ok = await verifyStartup(def.pm2Name, def.label);
+            allOk = allOk && ok;
+        }
+        process.exit(allOk ? 0 : 1);
+    })();
 } else if (cmd === 'logs') {
+    const { targets, rest } = resolveTargets(process.argv);
     const SHORT_FLAGS = ['-f', '-n', '-t'];
-    let args = process.argv.slice(3).flatMap((arg) => {
+    let args = rest.flatMap((arg) => {
         // Only split bare combined short flags (e.g. "-fn" -> "-f", "-n"), not "--long" flags.
         if (!/^-[a-z]{2,}$/.test(arg)) return [arg];
         const chars = arg.slice(1).split('');
         if (!chars.every((c) => SHORT_FLAGS.includes(`-${c}`))) return [arg];
         return chars.map((c) => `-${c}`);
     });
-    let pm2Args = ['logs', 'lgy'];
+    const isSingleTarget = targets.length === 1;
+    let pm2Args = isSingleTarget ? ['logs', targets[0].def.pm2Name] : ['logs'];
     let isFollow = false;
     let showStamps = false;
 
@@ -242,8 +326,65 @@ if (cmd === 'version' || cmd === '-v' || cmd === '--version') {
     if (!isFollow) {
         pm2Args.push('--nostream');
     }
-    pm2Args.push('--raw');
-    runPm2LogsClean(pm2Args, showStamps);
+    if (isSingleTarget) {
+        pm2Args.push('--raw');
+        runPm2LogsClean(pm2Args, showStamps);
+    } else {
+        runPm2LogsPrefixed(pm2Args);
+    }
+} else if (cmd === 'status') {
+    const settings = getSettings();
+    const sessions = getSessions();
+
+    let pm2Procs = [];
+    const jlist = spawnSync('npx', ['-y', 'pm2', 'jlist'], { stdio: 'pipe' });
+    if (jlist.status === 0) {
+        try {
+            pm2Procs = JSON.parse(jlist.stdout.toString());
+        } catch (e) {}
+    }
+
+    const rows = Object.entries(PLATFORMS).map(([key, def]) => {
+        const { enabled } = platformState(key, settings);
+        const proc = pm2Procs.find((p) => p.name === def.pm2Name);
+        const sessionCount = Object.values(sessions).filter((s) => s.platform === key).length;
+
+        if (!proc) {
+            return [
+                def.label,
+                enabled ? 'yes' : 'no',
+                'not running',
+                '-',
+                '-',
+                '-',
+                '-',
+                String(sessionCount),
+            ];
+        }
+        const mem = proc.monit ? `${Math.round(proc.monit.memory / 1024 / 1024)}mb` : '?';
+        const cpu = proc.monit ? `${proc.monit.cpu}%` : '?';
+        const uptime =
+            proc.pm2_env.status === 'online' ? formatUptime(proc.pm2_env.pm_uptime) : '-';
+        return [
+            def.label,
+            enabled ? 'yes' : 'no',
+            proc.pm2_env.status,
+            uptime,
+            String(proc.pm2_env.restart_time),
+            cpu,
+            mem,
+            String(sessionCount),
+        ];
+    });
+
+    console.log();
+    console.log(
+        renderTable(
+            ['platform', 'enabled', 'status', 'uptime', '↺', 'cpu', 'memory', 'sessions'],
+            rows,
+        ),
+    );
+    console.log();
 } else if (cmd === 'enable') {
     if (isWin) {
         console.log(
@@ -304,19 +445,23 @@ if (cmd === 'version' || cmd === '-v' || cmd === '--version') {
     success(`Installed v${latestVersion}.`);
 
     info('Restarting daemon to apply the update...');
-    const restartResult = spawnSync('npx', ['-y', 'pm2', 'restart', 'lgy', '--update-env'], {
-        stdio: 'pipe',
-        cwd: path.join(__dirname, '..'),
-        env: { ...process.env, PYTHONUNBUFFERED: '1' },
-    });
+    const restartResult = spawnSync(
+        'npx',
+        ['-y', 'pm2', 'restart', PLATFORMS.discord.pm2Name, '--update-env'],
+        {
+            stdio: 'pipe',
+            cwd: path.join(__dirname, '..'),
+            env: { ...process.env, PYTHONUNBUFFERED: '1' },
+        },
+    );
 
     if (restartResult.status === 0) {
-        verifyStartup();
+        verifyStartup().then((ok) => process.exit(ok ? 0 : 1));
     } else if ((restartResult.stderr || '').toString().includes('not found')) {
         // Wasn't running before the update - start fresh instead of a false "restarted".
         info("Daemon wasn't running - starting it fresh...");
-        runPm2(['start', botPath, '--interpreter', pythonExe, '--name', 'lgy']);
-        verifyStartup();
+        runPm2(['start', botPath, '--interpreter', pythonExe, '--name', PLATFORMS.discord.pm2Name]);
+        verifyStartup().then((ok) => process.exit(ok ? 0 : 1));
     } else {
         console.error((restartResult.stderr || '').toString().trim());
         console.error(
@@ -338,6 +483,8 @@ if (cmd === 'version' || cmd === '-v' || cmd === '--version') {
             '  stop       Stop the background bot',
             '  restart    Restart the background bot',
             '  logs       View bot logs (Options: --tail, -n, -f, -t/--timestamp)',
+            '  status     Show enabled/running state, access lists, and active sessions',
+            "             (start/stop/restart/logs all take an optional 'discord'/'telegram' target, e.g. `lgy logs telegram`; defaults to discord)",
             '  enable     Register bot to start automatically on system boot',
             '  disable    Remove bot from system boot',
             '  setup      Run the configuration wizard (init)',
@@ -359,6 +506,11 @@ if (cmd === 'version' || cmd === '-v' || cmd === '--version') {
                 { label: 'Stop', value: 'stop', hint: 'Stop the running daemon' },
                 { label: 'Restart', value: 'restart', hint: 'Restart the running daemon' },
                 { label: 'Logs', value: 'logs', hint: 'View the live console logs' },
+                {
+                    label: 'Status',
+                    value: 'status',
+                    hint: 'Show enabled/running state per platform',
+                },
                 { label: 'Setup', value: 'setup', hint: 'Configure bot tokens and settings' },
                 {
                     label: 'Update',

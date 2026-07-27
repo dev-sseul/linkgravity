@@ -153,6 +153,8 @@ class TelegramAdapter(MessengerAdapter):
             await self.bot.edit_message_text(chat_id=message_ref.chat_id, message_id=message_ref.message_id, text=text)
             return True
         except TelegramError as e:
+            if "message is not modified" in str(e).lower():
+                return True  # already showing this exact text - not a real failure, don't send a duplicate
             logger.warning(f"Failed to edit Telegram message: {e}")
             return False
 

@@ -159,6 +159,24 @@ async function collectUserIds(existingIds, platformLabel) {
     return ids;
 }
 
+function stopDaemon(pm2Name, label) {
+    console.log(`${color.cyan}▶${color.reset} Stopping ${label} daemon...`);
+    const result = spawnSync('npx', ['-y', 'pm2', 'delete', pm2Name], { stdio: 'pipe' });
+    if (result.status === 0) {
+        p.outro(`${label} daemon stopped.`);
+        return;
+    }
+    const stderr = (result.stderr || '').toString();
+    if (stderr.includes('not found')) {
+        p.outro(`${label} daemon wasn't running.`);
+    } else {
+        console.error(stderr.trim());
+        p.outro(
+            `${color.yellow}⚠${color.reset} Failed to stop the ${label} daemon - run \`npx pm2 delete ${pm2Name}\` manually.`,
+        );
+    }
+}
+
 function startOrRestartDaemon(pm2Name, scriptPath, label) {
     console.log(`${color.cyan}▶${color.reset} Restarting ${label} daemon to apply changes...`);
     const restartResult = spawnSync('npx', ['-y', 'pm2', 'restart', pm2Name, '--update-env'], {
@@ -195,164 +213,220 @@ function startOrRestartDaemon(pm2Name, scriptPath, label) {
     }
 }
 
-async function runSetup() {
-    console.log();
-    p.intro(`${color.cyan}▶ LinkGravity Setup Wizard${color.reset}`);
-
-    const existingSettings = getSettings();
-
-    const platforms = await p.multiselect({
-        message: 'Which messenger platform(s) would you like to configure?',
-        options: [
-            { label: 'Discord', value: 'discord', hint: 'Slash commands, threads, voice' },
-            { label: 'Telegram', value: 'telegram', hint: '1 chat = 1 session, no voice yet' },
-        ],
-        required: true,
+async function configureDiscord(existingSettings) {
+    const discordToken = await p.password({
+        message: 'Discord Bot Token (Leave empty to keep current):',
     });
-    if (p.isCancel(platforms)) {
+    if (p.isCancel(discordToken)) {
         p.cancel('Setup cancelled.');
         process.exit(0);
     }
 
-    const settingsUpdates = {};
+    const sessionScopes = await collectSessionScopes(existingSettings.session_scopes);
 
-    if (platforms.includes('discord')) {
-        const discordToken = await p.password({
-            message: 'Discord Bot Token (Leave empty to keep current):',
+    const existingUserIds = existingSettings.allowed_user_ids
+        ? splitIds(existingSettings.allowed_user_ids)
+        : [];
+    const userIds = await collectUserIds(existingUserIds, 'Discord');
+
+    const updates = {};
+    if (discordToken) updates.discord_token = discordToken;
+    if (sessionScopes !== null) updates.session_scopes = sessionScopes;
+    if (userIds !== null) updates.allowed_user_ids = userIds.join(',');
+
+    p.note(
+        "Wake words aren't set here anymore - they need a voice recording to register " +
+            "(so only your voice triggers them), which this terminal wizard can't do. " +
+            'Set them from Discord with `/sound wake_words:<word>` once the bot is running.',
+        'Wake Words',
+    );
+
+    const group = await p.group(
+        {
+            tts_voice: () =>
+                p.select({
+                    message:
+                        'TTS Voice Model (Select default voice - you can change this anytime later in Discord via /sound, which lists many more):',
+                    options: [
+                        {
+                            label: 'ko-KR-SunHiNeural (Korean Female - Default)',
+                            value: 'ko-KR-SunHiNeural',
+                        },
+                        { label: 'ko-KR-InJoonNeural (Korean Male)', value: 'ko-KR-InJoonNeural' },
+                        { label: 'en-US-AriaNeural (English Female)', value: 'en-US-AriaNeural' },
+                        { label: 'en-US-GuyNeural (English Male)', value: 'en-US-GuyNeural' },
+                        {
+                            label: 'en-US-AnaNeural (English Female, child-like)',
+                            value: 'en-US-AnaNeural',
+                        },
+                        {
+                            label: 'en-US-ChristopherNeural (English Male)',
+                            value: 'en-US-ChristopherNeural',
+                        },
+                        {
+                            label: 'en-GB-SoniaNeural (English Female, UK)',
+                            value: 'en-GB-SoniaNeural',
+                        },
+                        { label: 'en-GB-RyanNeural (English Male, UK)', value: 'en-GB-RyanNeural' },
+                        {
+                            label: 'en-AU-NatashaNeural (English Female, AU)',
+                            value: 'en-AU-NatashaNeural',
+                        },
+                        {
+                            label: 'en-AU-WilliamNeural (English Male, AU)',
+                            value: 'en-AU-WilliamNeural',
+                        },
+                        {
+                            label: 'ja-JP-NanamiNeural (Japanese Female)',
+                            value: 'ja-JP-NanamiNeural',
+                        },
+                        { label: 'ja-JP-KeitaNeural (Japanese Male)', value: 'ja-JP-KeitaNeural' },
+                        {
+                            label: 'fr-FR-DeniseNeural (French Female)',
+                            value: 'fr-FR-DeniseNeural',
+                        },
+                        { label: 'de-DE-KatjaNeural (German Female)', value: 'de-DE-KatjaNeural' },
+                        {
+                            label: 'es-ES-ElviraNeural (Spanish Female)',
+                            value: 'es-ES-ElviraNeural',
+                        },
+                    ],
+                }),
+        },
+        {
+            onCancel: () => {
+                p.cancel('Setup cancelled.');
+                process.exit(0);
+            },
+        },
+    );
+
+    if (group.tts_voice) updates.tts_voice = group.tts_voice;
+    return updates;
+}
+
+async function configureTelegram(existingSettings) {
+    const telegramToken = await p.password({
+        message: 'Telegram Bot Token (from @BotFather, leave empty to keep current):',
+    });
+    if (p.isCancel(telegramToken)) {
+        p.cancel('Setup cancelled.');
+        process.exit(0);
+    }
+
+    p.note(
+        'Telegram has no channel/server gating yet - every chat you DM (or add) the bot to becomes ' +
+            'its own session, and there is no voice support yet.',
+        'Telegram Access',
+    );
+
+    const existingTelegramUserIds = existingSettings.telegram_allowed_user_ids
+        ? splitIds(existingSettings.telegram_allowed_user_ids)
+        : [];
+    const telegramUserIds = await collectUserIds(existingTelegramUserIds, 'Telegram');
+
+    const updates = {};
+    if (telegramToken) updates.telegram_token = telegramToken;
+    if (telegramUserIds !== null) updates.telegram_allowed_user_ids = telegramUserIds.join(',');
+    return updates;
+}
+
+const PLATFORMS = {
+    discord: {
+        label: 'Discord',
+        pm2Name: 'lgy',
+        scriptPath: path.join(__dirname, '..', 'src', 'main.py'),
+        configure: configureDiscord,
+    },
+    telegram: {
+        label: 'Telegram',
+        pm2Name: 'lgy-telegram',
+        scriptPath: path.join(__dirname, '..', 'src', 'main_telegram.py'),
+        configure: configureTelegram,
+    },
+};
+
+function platformState(key, settings) {
+    const configured = !!settings[`${key}_token`];
+    const enabled = settings[`${key}_enabled`] ?? (key === 'discord' && configured);
+    return { configured, enabled };
+}
+
+async function platformMenu(key) {
+    const def = PLATFORMS[key];
+
+    while (true) {
+        const settings = getSettings();
+        const { configured, enabled } = platformState(key, settings);
+
+        const options = [];
+        options.push(
+            enabled
+                ? { value: 'off', label: 'Turn OFF' }
+                : { value: 'on', label: configured ? 'Turn ON' : 'Configure & turn ON' },
+        );
+        if (configured)
+            options.push({ value: 'edit', label: 'Edit settings (token, access, etc.)' });
+        options.push({ value: 'back', label: '← Back' });
+
+        const action = await p.select({
+            message: `${def.label} — currently ${enabled ? 'ON' : 'OFF'}${configured ? '' : ' (not configured)'}`,
+            options,
         });
-        if (p.isCancel(discordToken)) {
+        if (p.isCancel(action)) {
             p.cancel('Setup cancelled.');
             process.exit(0);
         }
+        if (action === 'back') return;
 
-        const sessionScopes = await collectSessionScopes(existingSettings.session_scopes);
+        if (action === 'off') {
+            updateSettings({ [`${key}_enabled`]: false });
+            stopDaemon(def.pm2Name, def.label);
+            continue;
+        }
 
-        const existingUserIds = existingSettings.allowed_user_ids
-            ? splitIds(existingSettings.allowed_user_ids)
-            : [];
-        const userIds = await collectUserIds(existingUserIds, 'Discord');
+        if (action === 'on' && configured) {
+            updateSettings({ [`${key}_enabled`]: true });
+            startOrRestartDaemon(def.pm2Name, def.scriptPath, def.label);
+            continue;
+        }
 
-        if (discordToken) settingsUpdates.discord_token = discordToken;
-        if (sessionScopes !== null) settingsUpdates.session_scopes = sessionScopes;
-        if (userIds !== null) settingsUpdates.allowed_user_ids = userIds.join(',');
-
-        p.note(
-            "Wake words aren't set here anymore - they need a voice recording to register " +
-                "(so only your voice triggers them), which this terminal wizard can't do. " +
-                'Set them from Discord with `/sound wake_words:<word>` once the bot is running.',
-            'Wake Words',
-        );
-
-        const group = await p.group(
-            {
-                tts_voice: () =>
-                    p.select({
-                        message:
-                            'TTS Voice Model (Select default voice - you can change this anytime later in Discord via /sound, which lists many more):',
-                        options: [
-                            {
-                                label: 'ko-KR-SunHiNeural (Korean Female - Default)',
-                                value: 'ko-KR-SunHiNeural',
-                            },
-                            {
-                                label: 'ko-KR-InJoonNeural (Korean Male)',
-                                value: 'ko-KR-InJoonNeural',
-                            },
-                            {
-                                label: 'en-US-AriaNeural (English Female)',
-                                value: 'en-US-AriaNeural',
-                            },
-                            { label: 'en-US-GuyNeural (English Male)', value: 'en-US-GuyNeural' },
-                            {
-                                label: 'en-US-AnaNeural (English Female, child-like)',
-                                value: 'en-US-AnaNeural',
-                            },
-                            {
-                                label: 'en-US-ChristopherNeural (English Male)',
-                                value: 'en-US-ChristopherNeural',
-                            },
-                            {
-                                label: 'en-GB-SoniaNeural (English Female, UK)',
-                                value: 'en-GB-SoniaNeural',
-                            },
-                            {
-                                label: 'en-GB-RyanNeural (English Male, UK)',
-                                value: 'en-GB-RyanNeural',
-                            },
-                            {
-                                label: 'en-AU-NatashaNeural (English Female, AU)',
-                                value: 'en-AU-NatashaNeural',
-                            },
-                            {
-                                label: 'en-AU-WilliamNeural (English Male, AU)',
-                                value: 'en-AU-WilliamNeural',
-                            },
-                            {
-                                label: 'ja-JP-NanamiNeural (Japanese Female)',
-                                value: 'ja-JP-NanamiNeural',
-                            },
-                            {
-                                label: 'ja-JP-KeitaNeural (Japanese Male)',
-                                value: 'ja-JP-KeitaNeural',
-                            },
-                            {
-                                label: 'fr-FR-DeniseNeural (French Female)',
-                                value: 'fr-FR-DeniseNeural',
-                            },
-                            {
-                                label: 'de-DE-KatjaNeural (German Female)',
-                                value: 'de-DE-KatjaNeural',
-                            },
-                            {
-                                label: 'es-ES-ElviraNeural (Spanish Female)',
-                                value: 'es-ES-ElviraNeural',
-                            },
-                        ],
-                    }),
-            },
-            {
-                onCancel: () => {
-                    p.cancel('Setup cancelled.');
-                    process.exit(0);
-                },
-            },
-        );
-
-        if (group.tts_voice) settingsUpdates.tts_voice = group.tts_voice;
+        // action === 'edit', or first-time 'on' (not configured yet) - both need the full wizard.
+        const updates = await def.configure(settings);
+        updates[`${key}_enabled`] = true;
+        updateSettings(updates);
+        startOrRestartDaemon(def.pm2Name, def.scriptPath, def.label);
     }
+}
 
-    if (platforms.includes('telegram')) {
-        const telegramToken = await p.password({
-            message: 'Telegram Bot Token (from @BotFather, leave empty to keep current):',
+async function runSetup() {
+    console.log();
+    p.intro(`${color.cyan}▶ LinkGravity Setup Wizard${color.reset}`);
+
+    while (true) {
+        const settings = getSettings();
+        const options = Object.entries(PLATFORMS).map(([key, def]) => {
+            const { configured, enabled } = platformState(key, settings);
+            return {
+                value: key,
+                label: `${def.label} — ${enabled ? 'ON' : 'OFF'}`,
+                hint: configured ? undefined : 'not configured yet',
+            };
         });
-        if (p.isCancel(telegramToken)) {
+        options.push({ value: 'done', label: 'Done - exit setup' });
+
+        const choice = await p.select({ message: 'LinkGravity Setup', options });
+        if (p.isCancel(choice)) {
             p.cancel('Setup cancelled.');
             process.exit(0);
         }
+        if (choice === 'done') break;
 
-        p.note(
-            'Telegram has no channel/server gating yet - every chat you DM (or add) the bot to becomes ' +
-                'its own session, and there is no voice support yet.',
-            'Telegram Access',
-        );
-
-        const existingTelegramUserIds = existingSettings.telegram_allowed_user_ids
-            ? splitIds(existingSettings.telegram_allowed_user_ids)
-            : [];
-        const telegramUserIds = await collectUserIds(existingTelegramUserIds, 'Telegram');
-
-        if (telegramToken) settingsUpdates.telegram_token = telegramToken;
-        if (telegramUserIds !== null)
-            settingsUpdates.telegram_allowed_user_ids = telegramUserIds.join(',');
+        await platformMenu(choice);
     }
 
-    if (Object.keys(settingsUpdates).length > 0) {
-        updateSettings(settingsUpdates);
-    }
-
-    p.note('Configuration saved to lgy.json successfully!', 'Success');
-
-    if (platforms.includes('discord') && platforms.includes('telegram')) {
+    const finalSettings = getSettings();
+    if (finalSettings.discord_enabled && finalSettings.telegram_enabled) {
         p.note(
             'Both platforms share one tool-approval webhook port (18080), so running both daemons at ' +
                 'the same time means only one of them can receive approval callbacks right now. Safe to ' +
@@ -361,16 +435,7 @@ async function runSetup() {
         );
     }
 
-    if (platforms.includes('discord')) {
-        startOrRestartDaemon('lgy', path.join(__dirname, '..', 'src', 'main.py'), 'Discord');
-    }
-    if (platforms.includes('telegram')) {
-        startOrRestartDaemon(
-            'lgy-telegram',
-            path.join(__dirname, '..', 'src', 'main_telegram.py'),
-            'Telegram',
-        );
-    }
+    p.outro('Setup complete.');
 }
 
 module.exports = runSetup;
