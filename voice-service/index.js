@@ -282,8 +282,11 @@ const detectorCache = new Map();
 // confirmed no matter how much silence padding was fed afterward.
 // Verified against a native Rust reproduction of this exact detector
 // before settling on 0.5 (matches rustpotter's own default, and what
-// rustpotter-cli scored real captured audio at: 0.55-0.73).
-const WAKE_MATCH_THRESHOLD = 0.5;
+// rustpotter-cli scored real captured audio at: 0.55-0.73). Nudged
+// down to 0.45 after real-world use kept narrowly missing genuine
+// wake-word hits (0.44-0.47 range) - still far above the near-zero
+// range that broke confirmation entirely above.
+const WAKE_MATCH_THRESHOLD = 0.45;
 
 async function getDetectorForUser(userId) {
     if (detectorCache.has(userId)) return detectorCache.get(userId);
@@ -664,17 +667,22 @@ function setupReceiver(connection, guildId) {
                 // The real pass/fail decision - see WAKE_MATCH_THRESHOLD's
                 // comment for why this has to be a meaningful cutoff.
                 // bestDiagScore comes from the separate diagnostic
-                // instance above (see its comment in getDetectorForUser)
-                // so a "no match" line still shows the real closest
-                // score instead of a meaningless flat 0.000.
+                // instance above (see its comment in getDetectorForUser) -
+                // a much looser config (threshold 0.01, min_scores 1), so
+                // its number is on a different scale and NOT directly
+                // comparable to WAKE_MATCH_THRESHOLD. It exists only so a
+                // rejected utterance still shows some sense of "how close,"
+                // since the real detector often reports a flat 0.000.
                 wakeConfirmed = bestWakeScore >= WAKE_MATCH_THRESHOLD;
                 matchedWakeWord = wakeConfirmed ? bestWakeScoreName : null;
                 console.log(
                     wakeConfirmed
                         ? `[Wake] ${userId}: CONFIRMED (score ${bestWakeScore.toFixed(3)} for ` +
                               `"${bestWakeScoreName}", threshold ${WAKE_MATCH_THRESHOLD})`
-                        : `[Wake] ${userId}: no match (closest score ${bestDiagScore.toFixed(3)} for ` +
-                              `"${bestDiagScoreName ?? 'n/a'}", needed ${WAKE_MATCH_THRESHOLD})`,
+                        : `[Wake] ${userId}: no match (score ${bestWakeScore.toFixed(3)}, ` +
+                              `threshold ${WAKE_MATCH_THRESHOLD}; diagnostic-only closeness ` +
+                              `${bestDiagScore.toFixed(3)} for "${bestDiagScoreName ?? 'n/a'}" - ` +
+                              `different scoring config, not directly comparable to the threshold)`,
                 );
             }
 
