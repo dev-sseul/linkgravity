@@ -3,6 +3,7 @@ forum-topic support yet) - see handoff notes for the forum-mode follow-up."""
 
 import asyncio
 import html
+import re
 import uuid
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager, suppress
@@ -23,6 +24,33 @@ from messengers.base import (
     ToolApprovalOutcome,
 )
 
+_CODE_BLOCK_RE = re.compile(r"```(?:\w+\n)?(.*?)```|`([^`\n]+)`", re.DOTALL)
+_BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
+
+
+def markdown_to_telegram_html(text: str) -> str:
+    """Converts the Discord-flavored markdown this codebase generates (bold, code fences) into Telegram's HTML parse mode, escaping everything else."""
+    out = []
+    pos = 0
+    for m in _CODE_BLOCK_RE.finditer(text):
+        out.append(_BOLD_RE.sub(r"<b>\1</b>", html.escape(text[pos : m.start()])))
+        content = m.group(1) if m.group(1) is not None else m.group(2)
+        tag = "pre" if m.group(1) is not None else "code"
+        out.append(f"<{tag}>{html.escape(content)}</{tag}>")
+        pos = m.end()
+    out.append(_BOLD_RE.sub(r"<b>\1</b>", html.escape(text[pos:])))
+    return "".join(out)
+
+
+async def _safe_query_edit(query, **kwargs) -> None:
+    try:
+        await query.edit_message_text(**kwargs)
+    except TelegramError as e:
+        if "message is not modified" in str(e).lower():
+            return
+        logger.error(f"Failed to edit Telegram message via callback query: {e}")
+        raise
+
 
 class _TelegramPromptHandle(PromptHandle):
     def __init__(self, bot, text: str, reply_markup, cleanup: Callable[[], None] | None = None):
@@ -35,9 +63,14 @@ class _TelegramPromptHandle(PromptHandle):
         self.outcome: ToolApprovalOutcome | None = None
 
     async def send(self, conversation_ref: int) -> Message:
-        msg = await self.bot.send_message(
-            chat_id=conversation_ref, text=self.text, reply_markup=self.reply_markup, parse_mode="HTML"
-        )
+        text = self.text if len(self.text) <= 4000 else self.text[:3997] + "..."
+        try:
+            msg = await self.bot.send_message(
+                chat_id=conversation_ref, text=text, reply_markup=self.reply_markup, parse_mode="HTML"
+            )
+        except TelegramError as e:
+            logger.error(f"Failed to send Telegram prompt message: {e}")
+            raise
         self.chat_id = msg.chat_id
         self.message_id = msg.message_id
         return msg
@@ -57,6 +90,7 @@ class _TelegramPromptHandle(PromptHandle):
 
 class TelegramAdapter(MessengerAdapter):
     platform_name = "telegram"
+    supports_renaming = False
 
     def __init__(self, bot):
         self.bot = bot
@@ -146,7 +180,13 @@ class TelegramAdapter(MessengerAdapter):
     # -- plain messaging ---------------------------------------------------
 
     async def send_message(self, conversation_ref: int, text: str) -> Message:
-        return await self.bot.send_message(chat_id=conversation_ref, text=text)
+        try:
+            return await self.bot.send_message(
+                chat_id=conversation_ref, text=markdown_to_telegram_html(text), parse_mode="HTML"
+            )
+        except TelegramError as e:
+            logger.error(f"Failed to send Telegram message: {e}")
+            raise
 
     async def edit_message(self, message_ref: Message, text: str) -> bool:
         try:
@@ -202,7 +242,7 @@ class TelegramAdapter(MessengerAdapter):
         scope_options: list[ScopeOption],
     ) -> PromptHandle:
         prompt_id = uuid.uuid4().hex[:12]
-        text = f"<b>{html.escape(title)}</b>\n\n{html.escape(body)}"
+        text = f"<b>{html.escape(title)}</b>\n\n{markdown_to_telegram_html(body)}"
         keys: list[str] = []
         keyboard: list[list[InlineKeyboardButton]] = []
 
@@ -218,7 +258,7 @@ class TelegramAdapter(MessengerAdapter):
                 new_text = "❌ <b>Rejected</b>"
             handle.text = new_text
             await query.answer()
-            await query.edit_message_text(text=new_text, parse_mode="HTML")
+            await _safe_query_edit(query, text=new_text, parse_mode="HTML")
 
         allow_key = f"{prompt_id}:allow"
         self._callbacks[allow_key] = lambda query: resolve("allow", None, query)
@@ -263,11 +303,12 @@ class TelegramAdapter(MessengerAdapter):
             new_text = f"✅ <b>{note}: {html.escape(chosen_text)}</b>"
             handle.text = new_text
             await query.answer()
-            await query.edit_message_text(text=new_text, parse_mode="HTML")
+            await _safe_query_edit(query, text=new_text, parse_mode="HTML")
 
         async def write_in(query):
             await query.answer()
-            await query.edit_message_text(
+            await _safe_query_edit(
+                query,
                 text=f"❓ <b>{html.escape(question)}</b>\n\n💬 Reply with your answer as a message.",
                 parse_mode="HTML",
                 reply_markup=ForceReply(selective=True),

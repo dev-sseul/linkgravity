@@ -4,7 +4,7 @@ from datetime import datetime
 
 from config import session_manager
 from messengers.base import IncomingMessage
-from messengers.registry import get_adapter
+from messengers.registry import get_adapter_for_platform
 from services.response import render_thought_process, send_agy_response
 from services.streaming import stream_thinking_latest
 from utils.utils import (
@@ -20,7 +20,7 @@ from utils.utils import (
 
 
 async def handle_approval_reply(incoming: IncomingMessage, session: dict, content: str, pa) -> bool:
-    adapter = get_adapter()
+    adapter = get_adapter_for_platform(incoming.platform)
     thread = incoming.conversation_ref
 
     if session_manager.get_pending_approval_type_by_conv(incoming.conversation_id) == "ask_question":
@@ -52,7 +52,7 @@ async def handle_approval_reply(incoming: IncomingMessage, session: dict, conten
 async def handle_pending_session(
     bot, incoming: IncomingMessage, session: dict, agy_content: str, content: str, image_paths: list
 ):
-    adapter = get_adapter()
+    adapter = get_adapter_for_platform(incoming.platform)
     thread = incoming.conversation_ref
     try:
         async with adapter.typing(thread):
@@ -74,9 +74,10 @@ async def handle_pending_session(
             await stream_task
 
             response_text = result_text
-            new_title = await generate_thread_title(content, response_text)
-            await adapter.rename_conversation(thread, new_title)
-            await update_agy_conversation_title(new_conv_id, new_title)
+            if adapter.supports_renaming:
+                new_title = await generate_thread_title(content, response_text)
+                await adapter.rename_conversation(thread, new_title)
+                await update_agy_conversation_title(new_conv_id, new_title)
 
             response_text = await render_thought_process(new_conv_id, ctx, response_text, thread)
 
@@ -93,7 +94,7 @@ async def handle_pending_session(
 async def handle_existing_session(
     bot, incoming: IncomingMessage, session: dict, conv_id: str, agy_content: str, image_paths: list
 ):
-    adapter = get_adapter()
+    adapter = get_adapter_for_platform(incoming.platform)
     thread = incoming.conversation_ref
     try:
         async with adapter.typing(thread):
@@ -127,7 +128,7 @@ async def handle_thread_reply(bot, incoming: IncomingMessage):
     if not session:
         return
 
-    adapter = get_adapter()
+    adapter = get_adapter_for_platform(incoming.platform)
     thread = incoming.conversation_ref
     content = incoming.content.strip()
     if content.startswith("/new"):
@@ -168,6 +169,21 @@ async def handle_thread_reply(bot, incoming: IncomingMessage):
         handled = await handle_approval_reply(incoming, session, content, pa)
         if handled:
             return
+
+    has_pending_approval = bool(conv_id and pa and not pa.done())
+    if session_manager.get_queue(incoming.conversation_id) is not None and not has_pending_approval:
+        from core.agy_runner import stop_active_process
+
+        stop_active_process(incoming.conversation_id)
+        session_manager.remove_queue(incoming.conversation_id)
+
+        prev_session = session_manager.get_session(incoming.conversation_id)
+        if prev_session:
+            session_manager.set_session(
+                incoming.conversation_id, {**prev_session, "status": "pending", "conversation_id": None}
+            )
+            session = session_manager.get_session(incoming.conversation_id)
+            conv_id = None
 
     if not conv_id:
         if session.get("status") == "pending":

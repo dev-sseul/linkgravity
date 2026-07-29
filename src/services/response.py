@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import Any
 
 from config import MAX_EMBED_LEN, MODEL_CHOICES, session_manager
-from messengers.registry import get_adapter
+from messengers.registry import get_adapter_for_platform
 from utils.utils import get_current_model
 
 
@@ -14,7 +14,7 @@ async def send_agy_response(
     start_time: float = 0,
     conv_id: str = None,
 ):
-    adapter = get_adapter()
+    adapter = get_adapter_for_platform(session.get("platform", "discord"))
     session_manager.save_sessions()
 
     parts = [response_text[i : i + MAX_EMBED_LEN] for i in range(0, max(len(response_text), 1), MAX_EMBED_LEN)]

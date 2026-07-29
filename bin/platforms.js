@@ -34,17 +34,13 @@ function getSessions() {
     return {};
 }
 
+// Both platforms now run in one shared pm2 process - main.py checks discord_enabled/telegram_enabled at startup.
+const LGY_PM2_NAME = 'lgy';
+const LGY_SCRIPT_PATH = path.join(__dirname, '..', 'src', 'main.py');
+
 const PLATFORMS = {
-    discord: {
-        label: 'Discord',
-        pm2Name: 'lgy-discord',
-        scriptPath: path.join(__dirname, '..', 'src', 'main.py'),
-    },
-    telegram: {
-        label: 'Telegram',
-        pm2Name: 'lgy-telegram',
-        scriptPath: path.join(__dirname, '..', 'src', 'main_telegram.py'),
-    },
+    discord: { label: 'Discord' },
+    telegram: { label: 'Telegram' },
 };
 
 function platformState(key, settings) {
@@ -60,6 +56,8 @@ module.exports = {
     getSettings,
     updateSettings,
     getSessions,
+    LGY_PM2_NAME,
+    LGY_SCRIPT_PATH,
     PLATFORMS,
     platformState,
 };

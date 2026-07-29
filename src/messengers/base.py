@@ -68,6 +68,7 @@ class PromptHandle(ABC):
 
 class MessengerAdapter(ABC):
     platform_name: str = "unknown"
+    supports_renaming: bool = True  # False skips the AI title-generation call - its result would go nowhere anyway
 
     @abstractmethod
     def to_incoming_message(self, raw_event: Any) -> IncomingMessage | None:

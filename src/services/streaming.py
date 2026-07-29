@@ -6,7 +6,7 @@ from typing import Any
 import discord  # only for voice/TTS text cleanup below; messaging goes through the adapter
 
 from config import MAX_EMBED_LEN, STREAM_RATE_LIMIT_SEC, bot_settings, logger, session_manager
-from messengers.registry import get_adapter
+from messengers.registry import get_adapter_for_thread
 from utils.utils import clean_ansi
 
 
@@ -28,10 +28,11 @@ def _clear_current_tool(thread_id: str):
 
 
 class StreamUpdater:
-    def __init__(self, thread: Any, context_dict: dict):
+    def __init__(self, thread: Any, thread_id: str, context_dict: dict):
         self.MAX_EMBED_LEN = MAX_EMBED_LEN
         self.RATE_LIMIT_SEC = STREAM_RATE_LIMIT_SEC
         self.thread = thread
+        self.thread_id = thread_id
         self.context_dict = context_dict
         self.status_msg = None
         self.current_text = ""
@@ -64,7 +65,7 @@ class StreamUpdater:
             self.last_update_time = now
 
     async def _update(self, text: str, force_new: bool):
-        adapter = get_adapter()
+        adapter = get_adapter_for_thread(self.thread_id)
         try:
             if self.status_msg is not None and not force_new:
                 if await adapter.edit_message(self.status_msg, text):
@@ -151,7 +152,7 @@ async def stream_thinking_latest(bot, thread: Any, thread_id: str, context_dict:
         and cog._voice_state[str(thread.guild.id)] == thread.id
     )
 
-    ui_mgr = StreamUpdater(thread, context_dict)
+    ui_mgr = StreamUpdater(thread, thread_id, context_dict)
     tts_mgr = TTSStreamManager(thread_id, thread.guild.id if hasattr(thread, "guild") else None, cog, is_voice)
 
     try:

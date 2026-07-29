@@ -118,10 +118,10 @@ async def run_agy(
         for attempt in range(max_retries):
             try:
                 env = os.environ.copy()
-                env["AGY_DISCORD_BOT"] = "1"
+                env["LGY_APPROVAL_HOOK"] = "1"
                 env["PYTHONUNBUFFERED"] = "1"
                 if thread_id:
-                    env["DISCORD_THREAD_ID"] = thread_id
+                    env["LGY_THREAD_ID"] = thread_id
 
                 libstdbuf_path = _find_libstdbuf()  # works around agy's output-truncation bug
                 if libstdbuf_path:
@@ -206,7 +206,7 @@ async def run_agy(
                 gather_task = asyncio.create_task(_gather_pipes())
                 wait_task = asyncio.create_task(proc.wait())
 
-                # Slices let the timeout pause during a pending Discord approval (up to 3600s).
+                # Slices let the timeout pause during a pending tool approval (up to 3600s).
                 from config import session_manager as _sm
 
                 poll_slice = 5.0

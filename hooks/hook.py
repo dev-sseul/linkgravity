@@ -7,7 +7,7 @@ import urllib.request
 
 
 def main():
-    if os.environ.get("AGY_DISCORD_BOT") != "1":
+    if os.environ.get("LGY_APPROVAL_HOOK") != "1":
         print(json.dumps({"decision": "allow"}))
         return
 
@@ -29,7 +29,7 @@ def main():
             "conversation_id": conv_id,
             "tool_name": tool_name,
             "tool_input": tool_input_data,
-            "thread_id": os.environ.get("DISCORD_THREAD_ID"),
+            "thread_id": os.environ.get("LGY_THREAD_ID"),
         }
     ).encode("utf-8")
 
@@ -43,8 +43,7 @@ def main():
             decision = res_data.get("decision", "allow")
             if decision == "allow":
                 out = {"decision": "allow"}
-                # Print mode requires a matching allow rule even when this
-                # hook says "allow", or it soft-denies the tool call anyway.
+                # Print mode requires a matching allow rule even when this hook says "allow", or it soft-denies anyway.
                 if res_data.get("permissionOverrides"):
                     out["permissionOverrides"] = res_data["permissionOverrides"]
                 print(json.dumps(out))

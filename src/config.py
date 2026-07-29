@@ -7,8 +7,7 @@ WORKSPACE_DIR = Path.home() / ".gemini" / "linkgravity"
 WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
 DATA_DIR = WORKSPACE_DIR / "data"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
-# Per-user wake-word recordings + built .rpw reference (see EnrollmentManager).
-# Defined early so load_bot_settings' migration below can read it.
+# Per-user wake-word recordings (see EnrollmentManager); defined early so load_bot_settings' migration below can read it.
 WAKE_REF_DIR = WORKSPACE_DIR / "wake_refs"
 WAKE_REF_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -124,6 +123,7 @@ TMP_VOICE_DIR.mkdir(parents=True, exist_ok=True)
 
 MAX_EMBED_LEN = 1900
 STREAM_RATE_LIMIT_SEC = 0.5
+APPROVAL_TIMEOUT_SEC = 1800
 PERSISTENT_FILE = DATA_DIR / "persistent_tools.json"
 SESSION_FILE = DATA_DIR / "sessions.json"
 

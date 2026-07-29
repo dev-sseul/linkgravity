@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -78,6 +79,30 @@ class SessionManager:
 
     def get_active_queue_keys(self) -> list:
         return list(self.active_queues.keys())
+
+    def cleanup_stale_sessions(self, pending_max_age_days: int = 7) -> int:
+        """Only ever removes 'pending' sessions (started with /new but never actually used - no real conversation attached) older than pending_max_age_days, or with no created_at at all (pre-dates that field, safe to treat as stale). 'active' sessions are NEVER removed by age: Discord threads must stay resumable indefinitely, and Telegram's 1-chat-1-session model already overwrites its one entry on each /new, so there's nothing to accumulate there either. Returns how many were removed."""
+        now = datetime.now()
+        to_remove = []
+        for thread_id, session in self.sessions.items():
+            if session.get("status") != "pending":
+                continue
+            created_at_str = session.get("created_at")
+            if not created_at_str:
+                to_remove.append(thread_id)
+                continue
+            try:
+                age_days = (now - datetime.fromisoformat(created_at_str)).days
+            except ValueError:
+                continue
+            if age_days > pending_max_age_days:
+                to_remove.append(thread_id)
+
+        for thread_id in to_remove:
+            self.sessions.pop(thread_id, None)
+        if to_remove:
+            self.save_sessions()
+        return len(to_remove)
 
     def get_tts_task(self, thread_id: str) -> asyncio.Task | None:
         return self.active_tts_tasks.get(str(thread_id))

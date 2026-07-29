@@ -1,6 +1,7 @@
 import asyncio
 import glob
 import os
+from datetime import datetime
 from pathlib import Path
 
 import discord
@@ -53,7 +54,7 @@ async def fetch_models_background():
 
         logger.debug(f"Starting fetch_models_background using AGY_BIN: {AGY_BIN}")
         env = os.environ.copy()
-        env["AGY_DISCORD_BOT"] = "1"
+        env["LGY_APPROVAL_HOOK"] = "1"
         p = await asyncio.create_subprocess_exec(
             AGY_BIN,
             "models",
@@ -178,10 +179,12 @@ class GeneralCog(commands.Cog):
             str(thread.id),
             {
                 "status": "pending",
+                "platform": "discord",
                 "user_id": interaction.user.id,
                 "cwd": cwd or get_default_cwd(),
                 "model": model,
                 "conversation_id": None,
+                "created_at": datetime.now().isoformat(),
             },
         )
         await thread.send("✅ **Ready for new session!**")

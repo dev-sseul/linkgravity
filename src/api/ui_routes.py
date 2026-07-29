@@ -6,9 +6,9 @@ import uuid
 
 from aiohttp import web
 
-from config import logger, session_manager
+from config import APPROVAL_TIMEOUT_SEC, MAX_EMBED_LEN, logger, session_manager
 from messengers.base import ScopeOption
-from messengers.registry import get_adapter
+from messengers.registry import get_adapter_for_platform, get_adapter_for_thread
 
 
 def is_tool_allowed(tool_name, tool_input):
@@ -54,6 +54,13 @@ def allow_response(tool_name, tool_input):
     return web.json_response(body)
 
 
+async def _send_chunked(adapter, thread, text: str) -> None:
+    if not text:
+        return
+    for i in range(0, len(text), MAX_EMBED_LEN):
+        await adapter.send_message(thread, text[i : i + MAX_EMBED_LEN])
+
+
 def _persist_scope_if_granted(prompt_handle):
     """If the prompt was resolved via a persistent-allow button, records
     that scope. Scope persistence is business logic, so it lives here
@@ -84,18 +91,18 @@ async def handle_approve_request(request):
         # DEBUG-only (see logger.py's LOG_LEVEL). Silent by default.
         logger.debug(f"[APPROVE HOOK] tool_name={tool_name!r} conv_id={conv_id!r} tool_input={tool_input!r}")
 
-        adapter = get_adapter()
-
         target_thread = None
         target_thread_id = None
         for thread_id_str, sess in session_manager.get_all_sessions().items():
             if sess.get("conversation_id") == conv_id:
-                target_thread = adapter.resolve_conversation(thread_id_str)
+                candidate_adapter = get_adapter_for_platform(sess.get("platform", "discord"))
+                target_thread = candidate_adapter.resolve_conversation(thread_id_str)
                 target_thread_id = thread_id_str
                 break
 
         if not target_thread and payload_thread_id:
-            resolved_channel = adapter.resolve_conversation(payload_thread_id)
+            candidate_adapter = get_adapter_for_thread(payload_thread_id)
+            resolved_channel = candidate_adapter.resolve_conversation(payload_thread_id)
             if resolved_channel:
                 target_thread = resolved_channel
                 target_thread_id = payload_thread_id
@@ -106,7 +113,8 @@ async def handle_approve_request(request):
         if not target_thread:
             for thread_id_str, sess in reversed(list(session_manager.get_all_sessions().items())):
                 if sess.get("status") == "pending":
-                    target_thread = adapter.resolve_conversation(thread_id_str)
+                    candidate_adapter = get_adapter_for_platform(sess.get("platform", "discord"))
+                    target_thread = candidate_adapter.resolve_conversation(thread_id_str)
                     session_manager.update_session(thread_id_str, "conversation_id", conv_id)
                     session_manager.update_session(thread_id_str, "status", "active")
                     target_thread_id = thread_id_str
@@ -115,6 +123,8 @@ async def handle_approve_request(request):
         def _set_tool_status(key: str):
             if target_thread_id and session_manager.get_session(target_thread_id):
                 session_manager.update_session(target_thread_id, key, tool_name)
+
+        adapter = get_adapter_for_thread(target_thread_id) if target_thread_id else get_adapter_for_platform("discord")
 
         if "ask_question" in tool_name:
             _set_tool_status("current_tool")  # no separate approval phase here - it's waiting on the user either way
@@ -140,7 +150,15 @@ async def handle_approve_request(request):
             )
             await send_ordered(target_thread_id, lambda: prompt.send(target_thread))
 
-            chosen_opt = await future
+            try:
+                chosen_opt = await asyncio.wait_for(future, timeout=APPROVAL_TIMEOUT_SEC)
+            except asyncio.TimeoutError:
+                logger.warning(
+                    f"Question prompt timed out after {APPROVAL_TIMEOUT_SEC}s with no answer (conv_id={conv_id!r})"
+                )
+                session_manager.clear_pending_approval(approval_key)
+                await prompt.finalize()
+                return web.json_response({"decision": "deny", "reason": "User did not answer in time."})
             session_manager.clear_pending_approval(approval_key)
             await prompt.finalize()
 
@@ -221,13 +239,19 @@ async def handle_approve_request(request):
                 sub_cmd_formatted = f"```text\n{sub_cmd_display}\n```{sub_cmd_desc}"
 
                 async def _send_bash_prompt(sub_cmd_formatted=sub_cmd_formatted, prompt=prompt):
-                    await adapter.send_message(target_thread, sub_cmd_formatted)
+                    await _send_chunked(adapter, target_thread, sub_cmd_formatted)
                     return await prompt.send(target_thread)
 
                 await send_ordered(target_thread_id, _send_bash_prompt)
                 _set_tool_status("pending_approval_tool")
 
-                decision = await future
+                try:
+                    decision = await asyncio.wait_for(future, timeout=APPROVAL_TIMEOUT_SEC)
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        f"Tool approval timed out after {APPROVAL_TIMEOUT_SEC}s with no response (conv_id={conv_id!r}, tool={tool_name!r})"
+                    )
+                    decision = "reject"
                 session_manager.clear_pending_approval(approval_key)
                 _persist_scope_if_granted(prompt)
                 await prompt.finalize()
@@ -238,7 +262,7 @@ async def handle_approve_request(request):
                 _set_tool_status("current_tool")
 
             if target_thread and tool_msg_text and not prompted:
-                await send_ordered(target_thread_id, lambda: adapter.send_message(target_thread, tool_msg_formatted))
+                await send_ordered(target_thread_id, lambda: _send_chunked(adapter, target_thread, tool_msg_formatted))
 
             if not prompted:
                 _set_tool_status("current_tool")  # auto-allowed - runs immediately, no approval wait
@@ -256,7 +280,7 @@ async def handle_approve_request(request):
             if is_auto_allowed:
                 if target_thread and tool_msg_text:
                     await send_ordered(
-                        target_thread_id, lambda: adapter.send_message(target_thread, tool_msg_formatted)
+                        target_thread_id, lambda: _send_chunked(adapter, target_thread, tool_msg_formatted)
                     )
                 _set_tool_status("current_tool")  # auto-allowed - runs immediately, no approval wait
                 return allow_response(tool_name, tool_input)
@@ -272,13 +296,19 @@ async def handle_approve_request(request):
             )
 
             async def _send_prompt():
-                await adapter.send_message(target_thread, tool_msg_formatted)
+                await _send_chunked(adapter, target_thread, tool_msg_formatted)
                 return await prompt.send(target_thread)
 
             await send_ordered(target_thread_id, _send_prompt)
             _set_tool_status("pending_approval_tool")
 
-            decision = await future
+            try:
+                decision = await asyncio.wait_for(future, timeout=APPROVAL_TIMEOUT_SEC)
+            except asyncio.TimeoutError:
+                logger.warning(
+                    f"Tool approval timed out after {APPROVAL_TIMEOUT_SEC}s with no response (conv_id={conv_id!r}, tool={tool_name!r})"
+                )
+                decision = "reject"
             session_manager.clear_pending_approval(approval_key)
             _persist_scope_if_granted(prompt)
             await prompt.finalize()
@@ -294,3 +324,58 @@ async def handle_approve_request(request):
         for key in registered_approval_keys:
             session_manager.clear_pending_approval(key)
         return web.json_response({"decision": "allow"})
+
+
+async def handle_mcp_ask(request):
+    try:
+        data = await request.json()
+        thread_id = data.get("thread_id")
+
+        question = _clean_inline(data.get("question", "No question provided."))
+        options = [(_clean_inline(str(opt)) or "Option")[:80] for opt in data.get("options", [])]
+
+        adapter = get_adapter_for_thread(thread_id)
+        thread = adapter.resolve_conversation(thread_id)
+        if not thread:
+            return web.json_response({"answer": "Thread not found"}, status=400)
+
+        future = asyncio.get_event_loop().create_future()
+        # conv_id is always None here - key just needs to be unique for cleanup.
+        approval_key = f"mcp_ask:{thread_id}:{uuid.uuid4().hex}"
+        session_manager.set_pending_approval(approval_key, future, "ask_question")
+
+        prompt = adapter.create_question_prompt(future, question, options, allow_write_in=True)
+        msg = await prompt.send(thread)
+        session_manager.pending_approval_messages[approval_key] = msg
+
+        try:
+            answer = await asyncio.wait_for(future, timeout=300)
+            return web.json_response({"answer": answer})
+        except asyncio.TimeoutError:
+            return web.json_response({"answer": "User did not respond in time."})
+        finally:
+            await prompt.finalize()
+            session_manager.pending_approval_messages.pop(approval_key, None)
+            session_manager.clear_pending_approval(approval_key)
+    except Exception as e:
+        return web.json_response({"answer": f"Error: {e}"}, status=500)
+
+
+async def handle_mcp_send_channel(request):
+    try:
+        data = await request.json()
+        channel_id = data.get("channel_id")
+        message = data.get("message", "")
+
+        adapter = get_adapter_for_thread(channel_id)
+        channel = adapter.resolve_conversation(channel_id)
+        if not channel:
+            return web.json_response({"error": "Channel not found"}, status=400)
+
+        chunks = [message[i : i + MAX_EMBED_LEN] for i in range(0, len(message), MAX_EMBED_LEN)]
+        for chunk in chunks:
+            await adapter.send_message(channel, chunk)
+
+        return web.json_response({"answer": "success"})
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)

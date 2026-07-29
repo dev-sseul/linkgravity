@@ -1,9 +1,14 @@
 const p = require('@clack/prompts');
-const fs = require('fs');
-const path = require('path');
-const os = require('os');
 const { spawnSync } = require('child_process');
 const { python: pythonExe } = require('../npm-scripts/venv-paths');
+const {
+    getSettings,
+    updateSettings,
+    PLATFORMS,
+    platformState,
+    LGY_PM2_NAME,
+    LGY_SCRIPT_PATH,
+} = require('./platforms');
 
 const color = {
     reset: '\x1b[0m',
@@ -11,28 +16,6 @@ const color = {
     cyan: '\x1b[36m',
     yellow: '\x1b[33m',
 };
-
-const workspaceDir = path.join(os.homedir(), '.gemini', 'linkgravity');
-const settingsPath = path.join(workspaceDir, 'lgy.json');
-
-if (!fs.existsSync(workspaceDir)) fs.mkdirSync(workspaceDir, { recursive: true });
-
-function getSettings() {
-    if (fs.existsSync(settingsPath)) {
-        try {
-            return JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-        } catch (e) {}
-    }
-    return {};
-}
-
-function updateSettings(updates) {
-    const settings = getSettings();
-    for (const [key, value] of Object.entries(updates)) {
-        settings[key] = value;
-    }
-    fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 4));
-}
 
 function splitIds(raw) {
     return raw.split(/[\s,;]+/).filter(Boolean);
@@ -161,18 +144,21 @@ async function collectUserIds(existingIds, platformLabel) {
 
 function stopDaemon(pm2Name, label) {
     console.log(`${color.cyan}▶${color.reset} Stopping ${label} daemon...`);
-    const result = spawnSync('npx', ['-y', 'pm2', 'delete', pm2Name], { stdio: 'pipe' });
-    if (result.status === 0) {
-        p.outro(`${label} daemon stopped.`);
-        return;
+    spawnSync('npx', ['-y', 'pm2', 'delete', pm2Name], { stdio: 'pipe' });
+
+    const jlist = spawnSync('npx', ['-y', 'pm2', 'jlist'], { stdio: 'pipe' });
+    let stillRunning = false;
+    if (jlist.status === 0) {
+        try {
+            stillRunning = JSON.parse(jlist.stdout.toString()).some((p) => p.name === pm2Name);
+        } catch (e) {}
     }
-    const stderr = (result.stderr || '').toString();
-    if (stderr.includes('not found')) {
-        p.outro(`${label} daemon wasn't running.`);
+
+    if (!stillRunning) {
+        p.outro(`${label} daemon stopped.`);
     } else {
-        console.error(stderr.trim());
         p.outro(
-            `${color.yellow}⚠${color.reset} Failed to stop the ${label} daemon - run \`npx pm2 delete ${pm2Name}\` manually.`,
+            `${color.yellow}⚠${color.reset} ${label} daemon is still running - run \`npx pm2 delete ${pm2Name}\` manually and check \`npx pm2 list\`.`,
         );
     }
 }
@@ -331,25 +317,19 @@ async function configureTelegram(existingSettings) {
     return updates;
 }
 
-const PLATFORMS = {
-    discord: {
-        label: 'Discord',
-        pm2Name: 'lgy',
-        scriptPath: path.join(__dirname, '..', 'src', 'main.py'),
-        configure: configureDiscord,
-    },
-    telegram: {
-        label: 'Telegram',
-        pm2Name: 'lgy-telegram',
-        scriptPath: path.join(__dirname, '..', 'src', 'main_telegram.py'),
-        configure: configureTelegram,
-    },
+const CONFIGURERS = {
+    discord: configureDiscord,
+    telegram: configureTelegram,
 };
 
-function platformState(key, settings) {
-    const configured = !!settings[`${key}_token`];
-    const enabled = settings[`${key}_enabled`] ?? (key === 'discord' && configured);
-    return { configured, enabled };
+function applyDaemonState() {
+    const settings = getSettings();
+    const anyEnabled = Object.keys(PLATFORMS).some((k) => platformState(k, settings).enabled);
+    if (anyEnabled) {
+        startOrRestartDaemon(LGY_PM2_NAME, LGY_SCRIPT_PATH, 'LinkGravity');
+    } else {
+        stopDaemon(LGY_PM2_NAME, 'LinkGravity');
+    }
 }
 
 async function platformMenu(key) {
@@ -373,29 +353,25 @@ async function platformMenu(key) {
             message: `${def.label} — currently ${enabled ? 'ON' : 'OFF'}${configured ? '' : ' (not configured)'}`,
             options,
         });
-        if (p.isCancel(action)) {
-            p.cancel('Setup cancelled.');
-            process.exit(0);
-        }
-        if (action === 'back') return;
+        if (p.isCancel(action) || action === 'back') return;
 
         if (action === 'off') {
             updateSettings({ [`${key}_enabled`]: false });
-            stopDaemon(def.pm2Name, def.label);
+            applyDaemonState();
             continue;
         }
 
         if (action === 'on' && configured) {
             updateSettings({ [`${key}_enabled`]: true });
-            startOrRestartDaemon(def.pm2Name, def.scriptPath, def.label);
+            applyDaemonState();
             continue;
         }
 
         // action === 'edit', or first-time 'on' (not configured yet) - both need the full wizard.
-        const updates = await def.configure(settings);
+        const updates = await CONFIGURERS[key](settings);
         updates[`${key}_enabled`] = true;
         updateSettings(updates);
-        startOrRestartDaemon(def.pm2Name, def.scriptPath, def.label);
+        applyDaemonState();
     }
 }
 
@@ -413,26 +389,10 @@ async function runSetup() {
                 hint: configured ? undefined : 'not configured yet',
             };
         });
-        options.push({ value: 'done', label: 'Done - exit setup' });
-
-        const choice = await p.select({ message: 'LinkGravity Setup', options });
-        if (p.isCancel(choice)) {
-            p.cancel('Setup cancelled.');
-            process.exit(0);
-        }
-        if (choice === 'done') break;
+        const choice = await p.select({ message: 'LinkGravity Setup (Esc to finish)', options });
+        if (p.isCancel(choice)) break;
 
         await platformMenu(choice);
-    }
-
-    const finalSettings = getSettings();
-    if (finalSettings.discord_enabled && finalSettings.telegram_enabled) {
-        p.note(
-            'Both platforms share one tool-approval webhook port (18080), so running both daemons at ' +
-                'the same time means only one of them can receive approval callbacks right now. Safe to ' +
-                'run either one alone; running both simultaneously is not supported yet.',
-            'Known limitation',
-        );
     }
 
     p.outro('Setup complete.');

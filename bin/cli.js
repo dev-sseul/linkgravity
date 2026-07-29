@@ -3,10 +3,15 @@
 const { spawn, spawnSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
-const { PLATFORMS, getSettings, platformState, getSessions } = require('./platforms');
+const {
+    PLATFORMS,
+    getSettings,
+    platformState,
+    getSessions,
+    LGY_PM2_NAME,
+    LGY_SCRIPT_PATH,
+} = require('./platforms');
 
-// Find the absolute path to the Python bot script
-const botPath = path.join(__dirname, '..', 'src', 'main.py');
 const { python: pythonExe, isWin } = require('../npm-scripts/venv-paths');
 
 const cmd = process.argv[2];
@@ -33,11 +38,7 @@ function runPm2(args, silent = true) {
     const result = spawnSync('npx', ['-y', 'pm2', ...args], {
         stdio: stdioOpt,
         cwd: path.join(__dirname, '..'),
-        // pm2 pipes the Python process's stdout rather than giving it a
-        // TTY, so Python defaults to block-buffering it - occasional
-        // log lines (like a single WARNING) can sit in that buffer
-        // indefinitely instead of reaching `pm2 logs`/bot.log. This
-        // forces line-by-line flushing regardless of interpreter/OS.
+        // pm2 gives Python a pipe not a TTY, so it block-buffers stdout and can sit on log lines indefinitely - force line buffering.
         env: { ...process.env, PYTHONUNBUFFERED: '1' },
     });
 
@@ -73,11 +74,7 @@ function runPm2(args, silent = true) {
     }
 }
 
-// Matches a leading timestamp in either format our logs actually use:
-//   "2026-07-19 19:11:25 INFO  ..."          (loguru)
-//   "[2026-07-19 14:31:53] [INFO    ] ..."   (aiohttp access log)
-// Only strips the FIRST bracket group if present, so aiohttp's second
-// "[INFO ]" bracket (not a timestamp) is left alone.
+// Matches a leading timestamp from either loguru or aiohttp's access-log format; only strips the first bracket group so aiohttp's second "[INFO ]" bracket is left alone.
 const TIMESTAMP_PREFIX = /^\[?\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}\]?\s*/;
 // loguru's colorize=True puts an ANSI code before the timestamp digits, breaking the '^' anchor above.
 // eslint-disable-next-line no-control-regex
@@ -150,47 +147,51 @@ function runPm2LogsClean(args, showStamps = false) {
     });
 }
 
-function runPm2LogsPrefixed(args) {
-    // Multiple processes tailed together - keep pm2's own "id|name |" prefix, just strip ANSI color codes.
-    runPm2LogsStream(args, (line) => console.log(line.replace(ANSI_ESCAPE, '')));
-}
-
-function verifyStartup(pm2Name = PLATFORMS.discord.pm2Name, label = PLATFORMS.discord.label) {
+function verifyStartup() {
     return new Promise((resolve) => {
         process.stdout.write(
-            `${color.cyan}▶${color.reset} Verifying startup status (waiting for ${label} bot to come online)...`,
+            `${color.cyan}▶${color.reset} Verifying startup status (waiting for bot to come online)...`,
         );
 
-        let cp = spawn('npx', ['-y', 'pm2', 'logs', pm2Name, '--raw', '--lines', '20'], {
+        let cp = spawn('npx', ['-y', 'pm2', 'logs', LGY_PM2_NAME, '--raw', '--lines', '20'], {
             cwd: path.join(__dirname, '..'),
         });
 
+        let settled = false;
+        const finish = (ok) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            cp.kill();
+            resolve(ok);
+        };
+
+        // Give the --lines 20 replay burst a moment to flush before treating error text as a fresh crash, not old log noise.
+        let errorDetectionArmed = false;
+        setTimeout(() => {
+            errorDetectionArmed = true;
+        }, 1500);
+
         let timer = setTimeout(() => {
             console.log(
-                `\n\n${color.yellow}⏳ Startup verification timed out for ${label}. Run 'lgy logs ${pm2Name === PLATFORMS.discord.pm2Name ? 'discord' : 'telegram'}' to check status manually.${color.reset}`,
+                `\n\n${color.yellow}⏳ Startup verification timed out. Run 'lgy logs' to check status manually.${color.reset}`,
             );
-            cp.kill();
-            resolve(false);
-        }, 15000);
+            finish(false);
+        }, 30000);
 
         const checkLog = (data) => {
+            if (settled) return;
             const str = data.toString();
             if (str.includes('Bot is fully online and ready!')) {
-                clearTimeout(timer);
-                console.log(
-                    `\n${color.green}✔${color.reset} ${label} bot successfully came online!\n`,
-                );
-                cp.kill();
-                resolve(true);
+                console.log(`\n${color.green}✔${color.reset} Bot successfully came online!\n`);
+                finish(true);
             } else if (
-                str.includes('Traceback (most recent call last):') ||
-                str.includes('Error:') ||
-                str.includes('Exception:')
+                errorDetectionArmed &&
+                (str.includes('Traceback (most recent call last):') ||
+                    str.includes('Error:') ||
+                    str.includes('Exception:'))
             ) {
-                clearTimeout(timer);
-                console.log(
-                    `\n\n${color.yellow}❌ Error detected during ${label} startup:${color.reset}`,
-                );
+                console.log(`\n\n${color.yellow}❌ Error detected during startup:${color.reset}`);
                 const errorLines = str
                     .split('\n')
                     .filter(
@@ -200,8 +201,7 @@ function verifyStartup(pm2Name = PLATFORMS.discord.pm2Name, label = PLATFORMS.di
                             l.trim().length > 0,
                     );
                 console.log(errorLines.join('\n'));
-                cp.kill();
-                resolve(false);
+                finish(false);
             }
         };
 
@@ -235,73 +235,31 @@ function renderTable(headers, rows) {
     return lines.join('\n');
 }
 
-// Optional platform arg after the command (e.g. `lgy logs telegram`) targets just that one; omitting it targets every enabled platform.
-function resolveTargets(argv) {
-    const maybeKey = argv[3];
-    if (maybeKey && PLATFORMS[maybeKey]) {
-        return { targets: [{ key: maybeKey, def: PLATFORMS[maybeKey] }], rest: argv.slice(4) };
-    }
-
-    const settings = getSettings();
-    const enabledKeys = Object.keys(PLATFORMS).filter((k) => platformState(k, settings).enabled);
-    if (enabledKeys.length === 0) {
-        console.error(
-            `${color.yellow}⚠${color.reset} No platform is currently enabled - run \`lgy setup\` first.`,
-        );
-        process.exit(1);
-    }
-    return {
-        targets: enabledKeys.map((k) => ({ key: k, def: PLATFORMS[k] })),
-        rest: argv.slice(3),
-    };
-}
-
 if (cmd === 'version' || cmd === '-v' || cmd === '--version') {
     const pkg = require('../package.json');
     console.log(`linkgravity v${pkg.version}`);
 } else if (cmd === 'start') {
-    const { targets } = resolveTargets(process.argv);
-    (async () => {
-        let allOk = true;
-        for (const { def } of targets) {
-            info(`Starting ${def.label} daemon...`);
-            runPm2(['start', def.scriptPath, '--interpreter', pythonExe, '--name', def.pm2Name]);
-            const ok = await verifyStartup(def.pm2Name, def.label);
-            allOk = allOk && ok;
-        }
-        process.exit(allOk ? 0 : 1);
-    })();
+    info('Starting LinkGravity daemon...');
+    runPm2(['start', LGY_SCRIPT_PATH, '--interpreter', pythonExe, '--name', LGY_PM2_NAME]);
+    verifyStartup().then((ok) => process.exit(ok ? 0 : 1));
 } else if (cmd === 'stop') {
-    const { targets } = resolveTargets(process.argv);
-    for (const { def } of targets) {
-        info(`Stopping ${def.label} daemon...`);
-        runPm2(['stop', def.pm2Name]);
-        success(`${def.label} daemon stopped successfully.\n`);
-    }
+    info('Stopping LinkGravity daemon...');
+    runPm2(['stop', LGY_PM2_NAME]);
+    success('Daemon stopped successfully.\n');
 } else if (cmd === 'restart') {
-    const { targets } = resolveTargets(process.argv);
-    (async () => {
-        let allOk = true;
-        for (const { def } of targets) {
-            info(`Restarting ${def.label} daemon...`);
-            runPm2(['restart', def.pm2Name, '--update-env']);
-            const ok = await verifyStartup(def.pm2Name, def.label);
-            allOk = allOk && ok;
-        }
-        process.exit(allOk ? 0 : 1);
-    })();
+    info('Restarting LinkGravity daemon...');
+    runPm2(['restart', LGY_PM2_NAME, '--update-env']);
+    verifyStartup().then((ok) => process.exit(ok ? 0 : 1));
 } else if (cmd === 'logs') {
-    const { targets, rest } = resolveTargets(process.argv);
     const SHORT_FLAGS = ['-f', '-n', '-t'];
-    let args = rest.flatMap((arg) => {
+    let args = process.argv.slice(3).flatMap((arg) => {
         // Only split bare combined short flags (e.g. "-fn" -> "-f", "-n"), not "--long" flags.
         if (!/^-[a-z]{2,}$/.test(arg)) return [arg];
         const chars = arg.slice(1).split('');
         if (!chars.every((c) => SHORT_FLAGS.includes(`-${c}`))) return [arg];
         return chars.map((c) => `-${c}`);
     });
-    const isSingleTarget = targets.length === 1;
-    let pm2Args = isSingleTarget ? ['logs', targets[0].def.pm2Name] : ['logs'];
+    let pm2Args = ['logs', LGY_PM2_NAME];
     let isFollow = false;
     let showStamps = false;
 
@@ -326,12 +284,8 @@ if (cmd === 'version' || cmd === '-v' || cmd === '--version') {
     if (!isFollow) {
         pm2Args.push('--nostream');
     }
-    if (isSingleTarget) {
-        pm2Args.push('--raw');
-        runPm2LogsClean(pm2Args, showStamps);
-    } else {
-        runPm2LogsPrefixed(pm2Args);
-    }
+    pm2Args.push('--raw');
+    runPm2LogsClean(pm2Args, showStamps);
 } else if (cmd === 'status') {
     const settings = getSettings();
     const sessions = getSessions();
@@ -344,46 +298,25 @@ if (cmd === 'version' || cmd === '-v' || cmd === '--version') {
         } catch (e) {}
     }
 
-    const rows = Object.entries(PLATFORMS).map(([key, def]) => {
-        const { enabled } = platformState(key, settings);
-        const proc = pm2Procs.find((p) => p.name === def.pm2Name);
-        const sessionCount = Object.values(sessions).filter((s) => s.platform === key).length;
-
-        if (!proc) {
-            return [
-                def.label,
-                enabled ? 'yes' : 'no',
-                'not running',
-                '-',
-                '-',
-                '-',
-                '-',
-                String(sessionCount),
-            ];
-        }
+    const proc = pm2Procs.find((p) => p.name === LGY_PM2_NAME);
+    if (!proc) {
+        console.log(`\n${color.cyan}▶${color.reset} daemon: not running\n`);
+    } else {
         const mem = proc.monit ? `${Math.round(proc.monit.memory / 1024 / 1024)}mb` : '?';
         const cpu = proc.monit ? `${proc.monit.cpu}%` : '?';
         const uptime =
             proc.pm2_env.status === 'online' ? formatUptime(proc.pm2_env.pm_uptime) : '-';
-        return [
-            def.label,
-            enabled ? 'yes' : 'no',
-            proc.pm2_env.status,
-            uptime,
-            String(proc.pm2_env.restart_time),
-            cpu,
-            mem,
-            String(sessionCount),
-        ];
-    });
+        console.log(
+            `\n${color.cyan}▶${color.reset} daemon: ${proc.pm2_env.status} (uptime: ${uptime}, restarts: ${proc.pm2_env.restart_time}, cpu: ${cpu}, mem: ${mem})\n`,
+        );
+    }
 
-    console.log();
-    console.log(
-        renderTable(
-            ['platform', 'enabled', 'status', 'uptime', '↺', 'cpu', 'memory', 'sessions'],
-            rows,
-        ),
-    );
+    const rows = Object.entries(PLATFORMS).map(([key, def]) => {
+        const { enabled } = platformState(key, settings);
+        const sessionCount = Object.values(sessions).filter((s) => s.platform === key).length;
+        return [def.label, enabled ? 'yes' : 'no', String(sessionCount)];
+    });
+    console.log(renderTable(['platform', 'enabled', 'sessions'], rows));
     console.log();
 } else if (cmd === 'enable') {
     if (isWin) {
@@ -445,22 +378,18 @@ if (cmd === 'version' || cmd === '-v' || cmd === '--version') {
     success(`Installed v${latestVersion}.`);
 
     info('Restarting daemon to apply the update...');
-    const restartResult = spawnSync(
-        'npx',
-        ['-y', 'pm2', 'restart', PLATFORMS.discord.pm2Name, '--update-env'],
-        {
-            stdio: 'pipe',
-            cwd: path.join(__dirname, '..'),
-            env: { ...process.env, PYTHONUNBUFFERED: '1' },
-        },
-    );
+    const restartResult = spawnSync('npx', ['-y', 'pm2', 'restart', LGY_PM2_NAME, '--update-env'], {
+        stdio: 'pipe',
+        cwd: path.join(__dirname, '..'),
+        env: { ...process.env, PYTHONUNBUFFERED: '1' },
+    });
 
     if (restartResult.status === 0) {
         verifyStartup().then((ok) => process.exit(ok ? 0 : 1));
     } else if ((restartResult.stderr || '').toString().includes('not found')) {
         // Wasn't running before the update - start fresh instead of a false "restarted".
         info("Daemon wasn't running - starting it fresh...");
-        runPm2(['start', botPath, '--interpreter', pythonExe, '--name', PLATFORMS.discord.pm2Name]);
+        runPm2(['start', LGY_SCRIPT_PATH, '--interpreter', pythonExe, '--name', LGY_PM2_NAME]);
         verifyStartup().then((ok) => process.exit(ok ? 0 : 1));
     } else {
         console.error((restartResult.stderr || '').toString().trim());
@@ -483,8 +412,7 @@ if (cmd === 'version' || cmd === '-v' || cmd === '--version') {
             '  stop       Stop the background bot',
             '  restart    Restart the background bot',
             '  logs       View bot logs (Options: --tail, -n, -f, -t/--timestamp)',
-            '  status     Show enabled/running state, access lists, and active sessions',
-            "             (start/stop/restart/logs all take an optional 'discord'/'telegram' target, e.g. `lgy logs telegram`; defaults to discord)",
+            '  status     Show daemon status and per-platform enabled/session counts',
             '  enable     Register bot to start automatically on system boot',
             '  disable    Remove bot from system boot',
             '  setup      Run the configuration wizard (init)',
@@ -509,7 +437,7 @@ if (cmd === 'version' || cmd === '-v' || cmd === '--version') {
                 {
                     label: 'Status',
                     value: 'status',
-                    hint: 'Show enabled/running state per platform',
+                    hint: 'Show daemon status and per-platform sessions',
                 },
                 { label: 'Setup', value: 'setup', hint: 'Configure bot tokens and settings' },
                 {

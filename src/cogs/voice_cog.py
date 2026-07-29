@@ -7,7 +7,7 @@ from discord import app_commands
 from discord.ext import commands, tasks
 
 from config import allowed, logger
-from messengers.registry import get_adapter
+from messengers.registry import get_adapter_for_platform
 
 from .voice.enrollment import EnrollmentManager
 from .voice.stt_session import SttSessionTracker
@@ -459,10 +459,7 @@ class VoiceCog(commands.Cog):
             pa = self.session_manager.get_pending_approval_by_conv(conv_id) if conv_id else None
             has_pending_approval = bool(conv_id and pa and not pa.done())
 
-            # A stale in-flight turn for this guild - cancel it, kill its agy process, stop
-            # playback. Skipped when a tool/question approval is pending: that turn is the one
-            # waiting on this very utterance as its answer, so cancelling here would kill the
-            # agy process before the "yes"/"no" below ever reaches it.
+            # Cancel a stale in-flight turn, unless a tool/question approval is pending (this utterance may be its answer).
             prev_task = self._active_turns.get(str(guild_id))
             if prev_task and not prev_task.done() and not has_pending_approval:
                 prev_task.cancel()
@@ -551,7 +548,7 @@ class VoiceCog(commands.Cog):
                         from utils.utils import generate_thread_title, update_agy_conversation_title
 
                         new_title = await generate_thread_title(text_to_ai, raw_ans)
-                        await get_adapter().rename_conversation(thread, new_title)
+                        await get_adapter_for_platform("discord").rename_conversation(thread, new_title)
                         await update_agy_conversation_title(new_conv_id, new_title)
                     else:
                         logger.debug("Voice: calling agy_send...")

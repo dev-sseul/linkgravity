@@ -19,6 +19,19 @@ from messengers.base import (
 )
 
 
+class _ErrorLoggingView(discord.ui.View):
+    async def on_error(self, interaction: discord.Interaction, error: Exception, item) -> None:
+        logger.exception(f"Discord button interaction error: {error}")
+        error_msg = "⚠️ **An error occurred while processing this button.** Please try again later or check the logs."
+        try:
+            if interaction.response.is_done():
+                await interaction.followup.send(error_msg, ephemeral=True)
+            else:
+                await interaction.response.send_message(error_msg, ephemeral=True)
+        except Exception:
+            pass
+
+
 class _DiscordPromptHandle(PromptHandle):
     def __init__(self, embed: discord.Embed, view: discord.ui.View):
         self.embed = embed
@@ -27,7 +40,13 @@ class _DiscordPromptHandle(PromptHandle):
         self.outcome: ToolApprovalOutcome | None = None
 
     async def send(self, conversation_ref: discord.abc.Messageable) -> discord.Message:
-        self.message = await conversation_ref.send(embed=self.embed, view=self.view)
+        if self.embed.description and len(self.embed.description) > 4000:
+            self.embed.description = self.embed.description[:3997] + "..."
+        try:
+            self.message = await conversation_ref.send(embed=self.embed, view=self.view)
+        except discord.HTTPException as e:
+            logger.error(f"Failed to send Discord prompt message: {e}")
+            raise
         return self.message
 
     async def finalize(self) -> None:
@@ -79,7 +98,11 @@ class DiscordAdapter(MessengerAdapter):
     # -- plain messaging ---------------------------------------------------
 
     async def send_message(self, conversation_ref: discord.abc.Messageable, text: str) -> discord.Message:
-        return await conversation_ref.send(text)
+        try:
+            return await conversation_ref.send(text)
+        except discord.HTTPException as e:
+            logger.error(f"Failed to send Discord message: {e}")
+            raise
 
     async def edit_message(self, message_ref: discord.Message, text: str) -> bool:
         try:
@@ -98,7 +121,11 @@ class DiscordAdapter(MessengerAdapter):
     async def send_files(self, conversation_ref: discord.abc.Messageable, file_paths: list[str]) -> None:
         if not file_paths:
             return
-        await conversation_ref.send(files=[discord.File(p) for p in file_paths])
+        try:
+            await conversation_ref.send(files=[discord.File(p) for p in file_paths])
+        except discord.HTTPException as e:
+            logger.error(f"Failed to send Discord files: {e}")
+            raise
 
     def resolve_conversation(self, conversation_id: str) -> Any:
         try:
@@ -127,7 +154,7 @@ class DiscordAdapter(MessengerAdapter):
         scope_options: list[ScopeOption],
     ) -> PromptHandle:
         embed = discord.Embed(title=title, description=body, color=discord.Color.orange())
-        view = discord.ui.View(timeout=None)
+        view = _ErrorLoggingView(timeout=None)
         handle = _DiscordPromptHandle(embed, view)
 
         def make_callback(decision: str, scope: ScopeOption | None):
@@ -183,7 +210,7 @@ class DiscordAdapter(MessengerAdapter):
             description=f"**{question}**\n\nPlease select an answer below.",
             color=discord.Color.blue(),
         )
-        view = discord.ui.View(timeout=None)
+        view = _ErrorLoggingView(timeout=None)
         handle = _DiscordPromptHandle(embed, view)
 
         async def _resolve(interaction: discord.Interaction, text: str, note: str):
@@ -242,6 +269,17 @@ class DiscordAdapter(MessengerAdapter):
 
                 async def on_submit(modal_self, interaction: discord.Interaction):
                     await _resolve(interaction, modal_self.answer.value, "Selected (Write in)")
+
+                async def on_error(modal_self, interaction: discord.Interaction, error: Exception) -> None:
+                    logger.exception(f"Discord modal submission error: {error}")
+                    error_msg = "⚠️ **An error occurred while processing your response.** Please try again later or check the logs."
+                    try:
+                        if interaction.response.is_done():
+                            await interaction.followup.send(error_msg, ephemeral=True)
+                        else:
+                            await interaction.response.send_message(error_msg, ephemeral=True)
+                    except Exception:
+                        pass
 
             async def write_in_callback(interaction: discord.Interaction):
                 await interaction.response.send_modal(WriteInModal())
