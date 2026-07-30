@@ -14,7 +14,7 @@ from config import TELEGRAM_TOKEN, allowed, bot_settings, logger, save_bot_setti
 from core.atomic_io import atomic_write_json, safe_load_json
 from handlers.message_router import handle_message
 from messengers.registry import register_adapter
-from messengers.telegram_adapter import TelegramAdapter, markdown_to_telegram_html
+from messengers.telegram_adapter import TelegramAdapter, markdown_to_telegram_html, safe_query_edit
 from utils.utils import get_default_cwd
 
 
@@ -91,21 +91,45 @@ async def cmd_model(update: Update, context) -> None:
         await update.message.reply_text("⚠️ No active session here. Start one with /new first.")
         return
 
-    if not context.args:
-        await update.message.reply_text("Usage: /model <name>\nExample: /model gemini-3.6-flash-high")
-        return
-
-    requested = " ".join(context.args)
     from cogs.general_cog import load_cached_models
 
     cached_models = load_cached_models()
+    current_model = session.get("model") or bot_settings.get("default_model")
+
+    def _apply_model(final_model: str) -> str:
+        session_manager.update_session(str(chat_id), "model", final_model)
+        bot_settings["default_model"] = final_model
+        save_bot_settings(bot_settings)
+        return final_model
+
+    if not context.args:
+        prompt_id = uuid.uuid4().hex[:12]
+        keyboard = []
+        for m in cached_models:
+            key = f"{prompt_id}:{m}"
+            label = ("✅ " if m == current_model else "") + m
+
+            async def pick(query, m=m):
+                final_model = _apply_model(m)
+                await query.answer()
+                await safe_query_edit(
+                    query,
+                    text=markdown_to_telegram_html(f"🤖 Model changed: **{final_model}**"),
+                    parse_mode="HTML",
+                )
+
+            adapter.register_callback(key, pick)
+            keyboard.append([InlineKeyboardButton(label, callback_data=key)])
+
+        await update.message.reply_text(
+            "Pick a model (or send /model <name> to type one):", reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return
+
+    requested = " ".join(context.args)
     exact = next((m for m in cached_models if m.lower() == requested.lower()), None)
     partial = next((m for m in cached_models if requested.lower() in m.lower()), None)
-    final_model = exact or partial or requested
-
-    session_manager.update_session(str(chat_id), "model", final_model)
-    bot_settings["default_model"] = final_model
-    save_bot_settings(bot_settings)
+    final_model = _apply_model(exact or partial or requested)
 
     await adapter.send_message(
         chat_id, f"🤖 Model changed: **{final_model}**\n💾 Also set as the default for new sessions."
@@ -114,27 +138,47 @@ async def cmd_model(update: Update, context) -> None:
 
 async def cmd_credit(update: Update, context) -> None:
     user = update.effective_user
+    adapter: TelegramAdapter = context.bot_data["adapter"]
+
     if not allowed(user.id, "telegram"):
         await update.message.reply_text("❌ Denied")
         return
 
-    if not context.args or context.args[0].lower() not in ("on", "off"):
-        await update.message.reply_text("Usage: /credit <on|off>")
-        return
-
-    use_credits = context.args[0].lower() == "on"
     settings_path = Path(os.getenv("HOME", "/root")) / ".gemini/antigravity-cli/settings.json"
-    try:
-        data = safe_load_json(settings_path, {}, logger=logger)
-        data["useG1Credits"] = use_credits
-        atomic_write_json(settings_path, data)
+    current = bool(safe_load_json(settings_path, {}, logger=logger).get("useG1Credits", False))
+
+    async def set_credit(use_credits: bool, query) -> None:
+        try:
+            data = safe_load_json(settings_path, {}, logger=logger)
+            data["useG1Credits"] = use_credits
+            atomic_write_json(settings_path, data)
+        except Exception as e:
+            await query.answer()
+            await safe_query_edit(query, text=f"⚠️ Failed to update settings: {e}")
+            return
 
         status_text = "🟢 **ON** (Using AI Credits)" if use_credits else "🔴 **OFF** (Using default/free model)"
-        await update.message.reply_text(
-            markdown_to_telegram_html(f"✅ AI Credit setting updated: {status_text}"), parse_mode="HTML"
+        await query.answer()
+        await safe_query_edit(
+            query,
+            text=markdown_to_telegram_html(f"✅ AI Credit setting updated: {status_text}"),
+            parse_mode="HTML",
         )
-    except Exception as e:
-        await update.message.reply_text(f"⚠️ Failed to update settings: {e}")
+
+    prompt_id = uuid.uuid4().hex[:12]
+    on_key, off_key = f"{prompt_id}:on", f"{prompt_id}:off"
+    adapter.register_callback(on_key, lambda query: set_credit(True, query))
+    adapter.register_callback(off_key, lambda query: set_credit(False, query))
+
+    keyboard = InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(("✅ " if current else "") + "🟢 ON", callback_data=on_key),
+                InlineKeyboardButton(("✅ " if not current else "") + "🔴 OFF", callback_data=off_key),
+            ]
+        ]
+    )
+    await update.message.reply_text("AI Credits:", reply_markup=keyboard)
 
 
 async def on_message(update: Update, context) -> None:
@@ -192,6 +236,8 @@ async def run_telegram(stop_event: asyncio.Event) -> None:
     app = build_application()
     logger.info("✅ Telegram bot starting (polling mode)...")
     await app.initialize()
+    if app.post_init:  # not auto-called outside run_polling()/run_webhook()
+        await app.post_init(app)
     await app.start()
     await app.updater.start_polling(allowed_updates=Update.ALL_TYPES)
     try:
@@ -200,3 +246,5 @@ async def run_telegram(stop_event: asyncio.Event) -> None:
         await app.updater.stop()
         await app.stop()
         await app.shutdown()
+        if app.post_shutdown:  # same gotcha as post_init: not auto-called here
+            await app.post_shutdown(app)

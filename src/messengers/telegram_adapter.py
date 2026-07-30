@@ -42,7 +42,7 @@ def markdown_to_telegram_html(text: str) -> str:
     return "".join(out)
 
 
-async def _safe_query_edit(query, **kwargs) -> None:
+async def safe_query_edit(query, **kwargs) -> None:
     try:
         await query.edit_message_text(**kwargs)
     except TelegramError as e:
@@ -258,7 +258,7 @@ class TelegramAdapter(MessengerAdapter):
                 new_text = "❌ <b>Rejected</b>"
             handle.text = new_text
             await query.answer()
-            await _safe_query_edit(query, text=new_text, parse_mode="HTML")
+            await safe_query_edit(query, text=new_text, parse_mode="HTML")
 
         allow_key = f"{prompt_id}:allow"
         self._callbacks[allow_key] = lambda query: resolve("allow", None, query)
@@ -303,11 +303,11 @@ class TelegramAdapter(MessengerAdapter):
             new_text = f"✅ <b>{note}: {html.escape(chosen_text)}</b>"
             handle.text = new_text
             await query.answer()
-            await _safe_query_edit(query, text=new_text, parse_mode="HTML")
+            await safe_query_edit(query, text=new_text, parse_mode="HTML")
 
         async def write_in(query):
             await query.answer()
-            await _safe_query_edit(
+            await safe_query_edit(
                 query,
                 text=f"❓ <b>{html.escape(question)}</b>\n\n💬 Reply with your answer as a message.",
                 parse_mode="HTML",
