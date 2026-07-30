@@ -1,6 +1,6 @@
 {
   "name": "linkgravity",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "description": "Discord bot bridge for the Antigravity (agy) CLI, with voice interaction support",
   "scripts": {
     "postinstall": "node npm-scripts/postinstall.js",
