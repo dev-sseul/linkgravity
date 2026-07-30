@@ -145,15 +145,16 @@ class TTSStreamManager:
 
 async def stream_thinking_latest(bot, thread: Any, thread_id: str, context_dict: dict, queue: asyncio.Queue):
     cog = bot.get_cog("VoiceCog") if bot else None
+    # getattr(..., None) is not None, not hasattr: discord.py's DMChannel has a `guild`
+    # property too (for duck-typing), but it always returns None - hasattr alone can't
+    # tell a real guild-backed channel/thread apart from a DM.
+    guild = getattr(thread, "guild", None)
     is_voice = bool(
-        cog
-        and hasattr(thread, "guild")
-        and str(thread.guild.id) in cog._voice_state
-        and cog._voice_state[str(thread.guild.id)] == thread.id
+        cog and guild is not None and str(guild.id) in cog._voice_state and cog._voice_state[str(guild.id)] == thread.id
     )
 
     ui_mgr = StreamUpdater(thread, thread_id, context_dict)
-    tts_mgr = TTSStreamManager(thread_id, thread.guild.id if hasattr(thread, "guild") else None, cog, is_voice)
+    tts_mgr = TTSStreamManager(thread_id, guild.id if guild is not None else None, cog, is_voice)
 
     try:
         while True:

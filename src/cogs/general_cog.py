@@ -138,21 +138,11 @@ class GeneralCog(commands.Cog):
                 choices.append(app_commands.Choice(name=m, value=m))
         return choices
 
-    @app_commands.command(name="new", description="Start a new agy session thread")
+    @app_commands.command(name="new", description="Start a new agy session thread (or session, in a DM)")
     @app_commands.describe(cwd="Working directory path", model="Model to use")
     async def cmd_new(self, interaction: discord.Interaction, cwd: str = None, model: str = None):
         if not allowed(interaction.user.id):
             await interaction.response.send_message("❌ Permission Denied", ephemeral=True)
-            return
-
-        target_channel = (
-            interaction.channel.parent if isinstance(interaction.channel, discord.Thread) else interaction.channel
-        )
-        if not is_allowed_session_channel(target_channel):
-            await interaction.response.send_message(
-                "❌ This channel/server isn't configured for starting sessions. Run `lgy setup` to add it.",
-                ephemeral=True,
-            )
             return
 
         if model:
@@ -164,6 +154,22 @@ class GeneralCog(commands.Cog):
                 return
         else:
             model = bot_settings.get("default_model") or None
+
+        # DMs have no threads, so the DM channel itself is the session (1 chat = 1 session,
+        # same model as Telegram) - skip the guild-scoped channel check entirely.
+        if interaction.guild is None:
+            await self._start_dm_session(interaction, cwd, model)
+            return
+
+        target_channel = (
+            interaction.channel.parent if isinstance(interaction.channel, discord.Thread) else interaction.channel
+        )
+        if not is_allowed_session_channel(target_channel):
+            await interaction.response.send_message(
+                "❌ This channel/server isn't configured for starting sessions. Run `lgy setup` to add it.",
+                ephemeral=True,
+            )
+            return
 
         await interaction.response.defer(ephemeral=True)
         import uuid
@@ -189,6 +195,53 @@ class GeneralCog(commands.Cog):
         )
         await thread.send("✅ **Ready for new session!**")
         await interaction.followup.send(f"✅ New session created: {thread.mention}", ephemeral=True)
+
+    async def _start_dm_session(self, interaction: discord.Interaction, cwd: str, model: str) -> None:
+        channel = interaction.channel
+        conv_key = str(channel.id)
+
+        def _create_session() -> None:
+            session_manager.set_session(
+                conv_key,
+                {
+                    "status": "pending",
+                    "platform": "discord",
+                    "user_id": interaction.user.id,
+                    "cwd": cwd or get_default_cwd(),
+                    "model": model,
+                    "conversation_id": None,
+                    "created_at": datetime.now().isoformat(),
+                },
+            )
+
+        if not session_manager.get_session(conv_key):
+            _create_session()
+            await interaction.response.send_message("✅ **Ready for new session!** Send a message to begin.")
+            return
+
+        # Existing session found: same overwrite-confirmation pattern as Telegram's /new,
+        # since starting fresh here has no separate thread to fall back to.
+        view = discord.ui.View(timeout=None)
+
+        async def confirm(button_interaction: discord.Interaction):
+            await button_interaction.response.edit_message(content="🆕 Starting a new session...", view=None)
+            _create_session()
+            await channel.send("✅ **Ready for new session!** Send a message to begin.")
+
+        async def cancel(button_interaction: discord.Interaction):
+            await button_interaction.response.edit_message(content="Cancelled.", view=None)
+
+        btn_confirm = discord.ui.Button(label="✅ Yes, start new", style=discord.ButtonStyle.danger)
+        btn_confirm.callback = confirm
+        btn_cancel = discord.ui.Button(label="Cancel", style=discord.ButtonStyle.secondary)
+        btn_cancel.callback = cancel
+        view.add_item(btn_confirm)
+        view.add_item(btn_cancel)
+
+        await interaction.response.send_message(
+            "⚠️ A session is already active in this DM. Starting a new one will lose its context. Continue?",
+            view=view,
+        )
 
     @cmd_new.autocomplete("cwd")
     async def cmd_new_cwd_autocomplete(self, interaction: discord.Interaction, current: str):
@@ -299,8 +352,12 @@ class GeneralCog(commands.Cog):
 
         for thread_id, sess in list(all_sessions.items())[-10:]:
             ch = self.bot.get_channel(int(thread_id))
+            if isinstance(ch, discord.DMChannel):
+                label = f"DM: {ch.recipient.display_name if ch.recipient else thread_id}"
+            else:
+                label = f"#{getattr(ch, 'name', f'ID:{thread_id}')}"
             embed.add_field(
-                name=f"#{getattr(ch, 'name', f'ID:{thread_id}')}",
+                name=label,
                 value=f"🤖 {MODEL_CHOICES.get(sess.get('model'), sess.get('model')) or get_current_model()}",
                 inline=False,
             )

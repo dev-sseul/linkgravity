@@ -96,6 +96,11 @@ class MessengerAdapter(ABC):
     async def start_conversation(self, origin_ref: Any, title: str) -> Any:
         raise NotImplementedError
 
+    def can_rename(self, conversation_ref: Any) -> bool:
+        """Per-conversation version of supports_renaming - lets a single adapter answer
+        differently depending on the target (e.g. Discord threads vs. Discord DMs)."""
+        return self.supports_renaming
+
     @abstractmethod
     async def rename_conversation(self, conversation_ref: Any, title: str) -> None:
         raise NotImplementedError

@@ -129,14 +129,32 @@ class DiscordAdapter(MessengerAdapter):
 
     def resolve_conversation(self, conversation_id: str) -> Any:
         try:
-            return self.bot.get_channel(int(conversation_id))
+            channel_id = int(conversation_id)
         except (TypeError, ValueError):
             return None
+        channel = self.bot.get_channel(channel_id)
+        if channel is not None:
+            return channel
+        # discord.py doesn't cache DM channels the way it caches guild channels/threads -
+        # DMChannel objects built from incoming messages (DMChannel._from_message) are never
+        # added to the private-channel cache, so get_channel() reliably misses for DMs. This
+        # is exactly what the approval webhook hits when it resolves a conversation purely by
+        # its stored ID (rather than from a live message/interaction object): the lookup came
+        # back None, .send() on None blew up, and the broad except in handle_approve_request
+        # swallowed it into a silent "allow" - no prompt, no tool-call display, nothing.
+        # PartialMessageable is the same fallback discord.py itself uses internally for this
+        # exact situation - it still supports send()/typing() from just the ID.
+        return discord.PartialMessageable(state=self.bot._connection, id=channel_id)
 
     async def start_conversation(self, origin_ref: discord.Message, title: str) -> discord.Thread:
         return await origin_ref.create_thread(name=title[:100], auto_archive_duration=1440)
 
+    def can_rename(self, conversation_ref: Any) -> bool:
+        return isinstance(conversation_ref, discord.Thread)
+
     async def rename_conversation(self, conversation_ref: discord.Thread, title: str) -> None:
+        if not isinstance(conversation_ref, discord.Thread):
+            return  # DMs (and any other non-thread channel) have no per-session title surface to rename
         await conversation_ref.edit(name=title[:100])
 
     @asynccontextmanager

@@ -74,7 +74,7 @@ async def handle_pending_session(
             await stream_task
 
             response_text = result_text
-            if adapter.supports_renaming:
+            if adapter.can_rename(thread):
                 new_title = await generate_thread_title(content, response_text)
                 await adapter.rename_conversation(thread, new_title)
                 await update_agy_conversation_title(new_conv_id, new_title)

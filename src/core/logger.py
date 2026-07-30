@@ -8,6 +8,12 @@ from loguru import logger
 
 def init_logger(workspace_dir: Path):
     logging.getLogger("discord").setLevel(logging.WARNING)
+    # httpx is what python-telegram-bot uses under the hood for every getUpdates
+    # long-poll request - left unset, it logs each one at INFO, which floods
+    # `lgy logs` with a line every poll cycle. httpcore is httpx's own transport
+    # layer and is just as noisy at DEBUG, so it's included pre-emptively too.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
     LOG_DIR = workspace_dir / "logs"
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     logger.remove()
