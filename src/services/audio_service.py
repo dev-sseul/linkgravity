@@ -29,7 +29,12 @@ async def tts(text: str, voice: str = None) -> bytes | None:
             active_voice = ko_voice
         else:
             active_voice = en_voice
-        communicate = edge_tts.Communicate(clean, active_voice)
+
+        speed = bot_settings.get("tts_speed", 1.0)
+        pct = round((speed - 1.0) * 100)
+        rate = f"{'+' if pct >= 0 else ''}{pct}%"
+
+        communicate = edge_tts.Communicate(clean, active_voice, rate=rate)
         with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
             tmp = f.name
         await communicate.save(tmp)

@@ -57,6 +57,9 @@ class VoiceCog(commands.Cog):
         self.cleanup_old_voice_files.cancel()
         self.enrollment.stop()
 
+    def _wake_word_required(self, user_id) -> bool:
+        return (self.bot_settings.get("wake_word_required") or {}).get(str(user_id), True)
+
     async def handle_voice_service_down(self):
         await self.enrollment.handle_voice_service_down()
 
@@ -178,6 +181,7 @@ class VoiceCog(commands.Cog):
         wake_word_map = self.bot_settings.get("wake_words") or {}
         own_word = wake_word_map.get(str(interaction.user.id))
         active_timer = self.bot_settings.get("active_timer", 60)
+        required = self._wake_word_required(interaction.user.id)
 
         if own_word:
             msg = (
@@ -185,11 +189,16 @@ class VoiceCog(commands.Cog):
                 f"💡 Say `{own_word}` to activate me. Once awake, I'll keep listening for {active_timer} seconds after each interaction.\n"
                 f"⚙️ You can customize settings using `/sound`."
             )
+        elif not required:
+            msg = f"🎤 Connected to `{vc_chan.name}`.\n💡 Wake word is off for you - just talk, I'm listening."
         else:
             msg = (
                 f"🎤 Connected to `{vc_chan.name}`.\n"
                 f"🎙️ You haven't set up a wake word yet, so I can't hear you - run `/sound wake_word:<word>` "
-                f"and say your chosen word a few times to register it in your voice."
+                f"and say your chosen word a few times to register it in your voice.\n"
+                f"💡 A wake word keeps everyone else's side conversation from triggering me by accident, and "
+                f"avoids running speech recognition on audio that isn't meant for me. If you use push-to-talk, "
+                f"turning it off with `/sound require_wake_word:off` is recommended instead."
             )
         await interaction.response.send_message(msg)
 
@@ -205,11 +214,17 @@ class VoiceCog(commands.Cog):
                 resp = await session.post(
                     f"{NODE_VOICE_API}/join", json={"guild_id": str(guild_id), "channel_id": str(vc_chan.id)}
                 )
+                if not required:
+                    # Node's opt-out set is in-memory and won't survive a Node restart, unlike our own bot_settings.
+                    await session.post(
+                        f"{NODE_VOICE_API}/set_wake_word_required",
+                        json={"user_id": str(interaction.user.id), "required": False},
+                    )
                 data = await resp.json()
                 if data.get("success"):
                     self._voice_state[str(guild_id)] = interaction.channel_id
 
-                    if own_word:
+                    if own_word or not required:
                         if self.bot_settings.get("tts_enabled", True):
                             welcome_audio = await self.tts("Voice connected.")
                             if welcome_audio:
@@ -236,7 +251,8 @@ class VoiceCog(commands.Cog):
             await interaction.channel.send("⚠️ Timeout connecting to voice backend.")
 
     @app_commands.command(
-        name="sound", description="Configure voice settings (Wake word, active time, threshold, TTS voice, TTS on/off)"
+        name="sound",
+        description="Configure voice settings (Wake word, active time, threshold, TTS voice/speed, TTS on/off)",
     )
     @app_commands.describe(
         wake_word="The single word/phrase that wakes the bot (recorded in your voice)",
@@ -244,6 +260,8 @@ class VoiceCog(commands.Cog):
         threshold="Voice volume sensitivity (1000~10000)",
         tts_voice="Select the AI TTS voice",
         tts_enabled="Turn Text-to-Speech ON or OFF",
+        tts_speed="TTS playback speed multiplier, e.g. 1.3 for 1.3x (0.5~2.0)",
+        require_wake_word="Require your wake word before I listen (default ON) - turn OFF if you use push-to-talk",
     )
     @app_commands.autocomplete(
         active_times=active_times_autocomplete,
@@ -259,6 +277,8 @@ class VoiceCog(commands.Cog):
         threshold: int = None,
         tts_voice: str = None,
         tts_enabled: str = None,
+        tts_speed: float = None,
+        require_wake_word: str = None,
     ):
         import aiohttp
 
@@ -272,19 +292,25 @@ class VoiceCog(commands.Cog):
             and threshold is None
             and tts_voice is None
             and tts_enabled is None
+            and tts_speed is None
+            and require_wake_word is None
         ):
             curr_wake = (self.bot_settings.get("wake_words") or {}).get(str(interaction.user.id), "None")
             curr_timer = self.bot_settings.get("active_timer", 60)
             curr_thresh = self.bot_settings.get("voice_threshold", 3000)
             curr_tts = self.bot_settings.get("tts_voice", "en-US-AriaNeural")
             curr_tts_on = "ON" if self.bot_settings.get("tts_enabled", True) else "OFF"
+            curr_tts_speed = self.bot_settings.get("tts_speed", 1.0)
+            curr_required = self._wake_word_required(interaction.user.id)
 
             embed = discord.Embed(title="⚙️ Current Voice Settings", color=0x3498DB)
             embed.add_field(name="🎙️ Wake Word", value=f"`{curr_wake}`", inline=False)
+            embed.add_field(name="🔒 Wake Word Required", value=f"`{'ON' if curr_required else 'OFF'}`", inline=False)
             embed.add_field(name="⏱️ Active Time", value=f"`{curr_timer}s`", inline=False)
             embed.add_field(name="🔊 Threshold", value=f"`{curr_thresh}`", inline=False)
             embed.add_field(name="🗣️ TTS Voice", value=f"`{curr_tts}`", inline=False)
             embed.add_field(name="🔊 TTS Enabled", value=f"`{curr_tts_on}`", inline=False)
+            embed.add_field(name="⏩ TTS Speed", value=f"`{curr_tts_speed}x`", inline=False)
             return await interaction.response.send_message(embed=embed)
 
         updated = []
@@ -314,6 +340,24 @@ class VoiceCog(commands.Cog):
             is_on = tts_enabled.lower() == "on"
             self.bot_settings["tts_enabled"] = is_on
             updated.append(f"🔊 TTS Enabled: `{'ON' if is_on else 'OFF'}`")
+        if tts_speed is not None:
+            clamped = max(0.5, min(2.0, tts_speed))
+            self.bot_settings["tts_speed"] = clamped
+            updated.append(f"⏩ TTS Speed: `{clamped}x`")
+        if require_wake_word is not None:
+            is_required = require_wake_word.lower() != "off"
+            required_map = self.bot_settings.setdefault("wake_word_required", {})
+            required_map[str(interaction.user.id)] = is_required
+            updated.append(f"🔒 Wake Word Required: `{'ON' if is_required else 'OFF'}`")
+            try:
+                async with aiohttp.ClientSession(timeout=NODE_REQUEST_TIMEOUT) as session:
+                    await session.post(
+                        f"{NODE_VOICE_API}/set_wake_word_required",
+                        json={"user_id": str(interaction.user.id), "required": is_required},
+                    )
+            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+                self.logger.warning(f"Node.js wake-word-required sync failed for {interaction.user.id}: {e}")
+                updated.append(f"(⚠️ Node.js Sync Failed: {e})")
 
         self.save_bot_settings(self.bot_settings)
 
@@ -408,7 +452,7 @@ class VoiceCog(commands.Cog):
             matched_wake_word = data.get("matched_wake_word")
             is_active = self.stt_session.is_active(str(guild_id))
 
-            if not is_active and not is_waking_up:
+            if not is_active and not is_waking_up and self._wake_word_required(user_id):
                 self.logger.debug(f"STT: ignored (sleeping): {text}")
                 await self.stt_session.clear_partial_msg(str(guild_id))
                 return

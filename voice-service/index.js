@@ -70,14 +70,7 @@ const connections = new Map();
 const players = new Map();
 
 function stereoToMono(buffer) {
-    // Discord voice receive is always 48kHz STEREO (see e.g. the
-    // official discordjs/voice-examples recorder, which decodes with
-    // channels: 2) - everything downstream here (WAV writing via
-    // createWavHeader, Rustpotter's config) was built assuming MONO
-    // input, so this converts the interleaved L/R stream to mono right
-    // after decoding, in one place, rather than decoding as channels: 1
-    // and having the native Opus decoder silently misinterpret an
-    // actually-stereo stream as mono.
+    // Discord voice receive is 48kHz stereo; everything downstream (WAV, Rustpotter) expects mono.
     const samples = buffer.length >> 2; // 2 bytes/sample * 2 channels
     const mono = Buffer.alloc(samples * 2);
     for (let i = 0; i < samples; i++) {
@@ -110,21 +103,8 @@ client.once(Events.ClientReady, () => {
     console.log(`🎤 Node.js Voice Microservice is online as ${client.user.tag}`);
 });
 
-// --- STT, done directly in Node ---
-// This is the same unofficial endpoint Python's SpeechRecognition
-// library (recognize_google) has used for years: audio encoded as FLAC,
-// POSTed to Google's v2 speech API with the "chromium" key that library
-// ships as its default. It's not a secret - it's the same publicly
-// documented key referenced all over SpeechRecognition's own source and
-// years of writeups (search "AIzaSyBOti4mM-6x9WDnZIjIeyEU21OpBXqWBgw
-// google speech api" if you want to verify that yourself). It's still an
-// unofficial/reverse-engineered API that Google could change or rate-
-// limit at any time - same risk the project already had via Python, just
-// no longer duplicated in two languages.
-//
-// Requires ffmpeg to do the WAV -> FLAC conversion - already a
-// dependency of this package (ffmpeg-static bundles the binary per
-// platform), so nothing extra to install.
+// Unofficial Google speech API endpoint/key - same one Python's SpeechRecognition library
+// (recognize_google) ships as its default; publicly known but could be rate-limited/changed anytime.
 const GOOGLE_STT_KEY = 'AIzaSyBOti4mM-6x9WDnZIjIeyEU21OpBXqWBgw';
 
 function flacEncode(wavBuffer) {
@@ -177,9 +157,7 @@ async function googleSTT(wavBuffer, lang = 'ko-KR') {
     }
 
     const raw = await res.text();
-    // Response is newline-delimited JSON, one object per line, e.g.:
-    //   {"result":[]}
-    //   {"result":[{"alternative":[{"transcript":"...","confidence":0.9}],"final":true}],"result_index":0}
+    // Response is newline-delimited JSON, one object per line.
     for (const line of raw.trim().split('\n')) {
         if (!line) continue;
         try {
@@ -218,47 +196,28 @@ function interruptTTS(guildId) {
 
 const activeStreams = new Map();
 
-// user_id -> true, while that user is recording wake-word samples (see
-// /enroll_start, /enroll_stop). Utterances from these users get routed
-// to /enroll_sample instead of the normal wake-check/STT pipeline.
+// user_id -> recording wake-word samples right now; routes to /enroll_sample instead of STT.
 const enrollingUsers = new Set();
 
-// guild_id -> ms epoch until which we're in the "awake, no need to repeat
-// the wake word" window (set by Python via /set_active whenever it
-// starts/renews that countdown - see VoiceCog._extend_active_window).
+// guild_id -> ms epoch until the "awake, skip wake word" window closes (set via /set_active).
 const activeUntil = new Map();
+
+// user_id -> opted out of wake-word gating via /sound - scoped per-user, unlike activeUntil.
+const wakeWordOptedOut = new Set();
 
 function isGuildActive(guildId) {
     return Date.now() < (activeUntil.get(guildId) || 0);
 }
 
-// --- Wake-word detection (Rustpotter, in-process) ---
-// Runs entirely in this Node process - no Python round trip. Each
-// enrolled user gets their own Rustpotter instance (built from the .rpw
-// reference file this same process produces via /build_wakeword, called
-// by EnrollmentManager._commit_enrollment once all samples are
-// confirmed), cached here and fed audio directly as it streams in from
-// Discord.
+// Rustpotter wake-word detection runs entirely in-process here, no Python round trip.
 const WAKE_REF_DIR = path.join(os.homedir(), '.gemini', 'linkgravity', 'wake_refs');
 
 let rustpotterModPromise = null;
 function loadRustpotterModule() {
     if (!rustpotterModPromise) {
         rustpotterModPromise = (async () => {
-            // Bare "rustpotter-web" doesn't resolve under Node's ESM
-            // loader (the package only declares a "module" field, which
-            // is a bundler-only convention Node doesn't read) - the
-            // actual entry file has to be named explicitly.
-            //
-            // Using the full "rustpotter-web" package here (not the
-            // "-slim" variant this used to be) because it's the only one
-            // of the two that also exposes WakewordRefCreator - the
-            // builder API used by /build_wakeword below to create a new
-            // .rpw reference directly from wav samples, in-process, with
-            // no external binary. The wasm binary is ~6% bigger
-            // (810KB vs 761KB) which is irrelevant for a Node backend
-            // (this distinction only matters for browser bundle size,
-            // which is the slim variant's actual purpose).
+            // Node's ESM loader needs the explicit entry file; "rustpotter-web" (not "-slim")
+            // is used because it also exposes WakewordRefCreator, used by /build_wakeword below.
             const mod = await import('rustpotter-web/rustpotter_wasm.js');
             const wasmPath = require.resolve('rustpotter-web/rustpotter_wasm_bg.wasm');
             mod.initSync(fs.readFileSync(wasmPath));
@@ -288,64 +247,22 @@ async function getDetectorForUser(userId) {
     config.setSampleRate(48000);
     config.setSampleFormat(mod.SampleFormat.i16);
     config.setChannels(1);
-    // See WAKE_MATCH_THRESHOLD's comment above - this MUST be a real,
-    // meaningful cutoff (not near-zero) for rustpotter's internal
-    // confirm-after-N-more-frames logic to ever finalize a detection.
+    // Must stay a real cutoff (not near-zero) for rustpotter's confirm-after-N-frames logic to finalize.
     config.setThreshold(WAKE_MATCH_THRESHOLD);
     config.setAveragedThreshold(0);
-    // Default is 1 - accepting a match the very first time it's ever
-    // the leading candidate, even for just one internal frame. Raised
-    // to 4 (was 3) so a candidate has to keep winning for a few frames
-    // running before it's trusted - this matters more now that
-    // scoreMode is back to Max (see below), which is more permissive
-    // per-frame than Median was, so this is the main compensating knob
-    // against one-off spurious spikes from unrelated speech.
+    // Raised from default 1 so a candidate has to keep winning for a few frames before it's trusted.
     config.setMinScores(4);
-    // Max: score is whichever of the 5 enrolled samples matches best.
-    // Median (tried between the two calibration notes below) requires
-    // the middle-ranked sample to also score well, which in practice
-    // means all 5 enrollment recordings need fairly consistent
-    // tone/pace/delivery - real speech isn't that consistent, so Median
-    // made real matches with naturally varied enrollment recordings
-    // score worse, not just false positives. Max lets a genuinely
-    // varied set of 5 recordings (calm, rushed, questioning, etc.) each
-    // cover a different real-world delivery, at the cost of also being
-    // easier to trip with something that merely resembles ONE of the 5
-    // by chance - minScores(4) above and the STT jamo cross-check in
-    // VoiceCog.handle_stt_input (tightened for short wake words
-    // specifically) are what compensate for that on the other two axes
-    // instead. Still needs field-tuning against real usage logs - see
-    // README's known-issues section.
+    // Max (best of the 5 enrolled samples) beats Median here - real speech isn't consistent enough
+    // for Median's "middle sample must also score well" requirement; minScores(4) compensates.
     config.setScoreMode(mod.ScoreMode.max);
 
     const rustpotter = mod.Rustpotter.new(config);
     rustpotter.addWakeword(rpwFile, fs.readFileSync(path.join(userDir, rpwFile)));
 
-    // Second, diagnostic-only instance fed the exact same audio in
-    // parallel, purely so "no match" cases still show a real number in
-    // the logs. It NEVER gates wake behavior - only entry.rustpotter
-    // above does that. Why a separate instance instead of reading a
-    // low score off the real one: rustpotter's own scoring
-    // (wakeword.run_detection in the Rust source) filters out any
-    // frame that doesn't already clear `threshold` before it's even
-    // tracked internally, so there is no bound API that exposes a
-    // sub-threshold score - process*() returns undefined for those,
-    // full stop. Naively lowering the REAL detector's threshold to see
-    // more doesn't work either (that's exactly the bug from the
-    // local-wake migration: near-zero threshold means background noise
-    // clears it on almost every frame, which keeps resetting
-    // detection_countdown before it can ever reach 0, so confirmation
-    // never completes for anyone, real wake word included).
-    //
-    // This instance sidesteps that by setting eager+minScores(1), so it
-    // finalizes and hands back a real score the very first time ANY
-    // frame clears its own (near-zero) threshold, instead of waiting on
-    // the countdown - the exact same escape hatch that would break
-    // gating on the real detector is safe to lean on here because nothing
-    // downstream ever treats this instance's output as a wake trigger.
-    // scoreMode is kept identical to the real detector so the number
-    // itself is a genuine, comparable similarity score - just captured
-    // more eagerly, not computed differently.
+    // Diagnostic-only twin, fed the same audio, purely so "no match" logs show a real closeness
+    // score - the real detector's own threshold hides sub-threshold scores entirely, and lowering
+    // its threshold isn't safe (near-zero means noise keeps resetting the confirm countdown).
+    // Never gates wake behavior; only entry.rustpotter above does.
     const diagConfig = mod.RustpotterConfig.new();
     diagConfig.setSampleRate(48000);
     diagConfig.setSampleFormat(mod.SampleFormat.i16);
@@ -375,16 +292,8 @@ async function getDetectorForUser(userId) {
     return entry;
 }
 
-// Feeds one Discord PCM chunk to a detector, exactly once per sample and
-// frame-aligned via a residual carryover - NOT by periodically
-// re-snapshotting a growing buffer, since Rustpotter's internal window
-// expects a genuinely continuous stream. Returns a RustpotterDetection
-// if any complete frame in this chunk triggered one, else null.
-//
-// Frames are fed back-to-back with NO external overlap - rustpotter
-// internally extracts multiple overlapping 10ms-shifted MFCCs from each
-// ~30ms buffer passed in (confirmed against its Rust source), so the
-// caller just needs to keep the stream continuous, not overlap it.
+// Feeds a PCM chunk to a detector frame-aligned via residual carryover (Rustpotter needs a
+// genuinely continuous stream). Returns a detection if a complete frame in this chunk triggered one.
 function feedPCMToDetector(entry, chunk) {
     const incoming = new Int16Array(chunk.buffer, chunk.byteOffset, chunk.length / 2);
     let combined = incoming;
@@ -430,13 +339,7 @@ function setupReceiver(connection, guildId) {
             new prism.opus.Decoder({ rate: 48000, channels: 2, frameSize: 960 }),
         );
 
-        // A single corrupted/dropped Opus packet (packet loss, a bad
-        // DAVE re-encrypt, whatever) throws inside prism-media's
-        // decoder. Streams turn a thrown _transform error into an
-        // 'error' event - with no listener here, Node's default for an
-        // unhandled 'error' event is to crash the ENTIRE process, not
-        // just this one user's utterance. Handling it here keeps voice
-        // alive for everyone else (and for this user's next utterance).
+        // Without a listener, an unhandled 'error' event here crashes the ENTIRE process on one bad packet.
         opusStream.on('error', (err) => {
             console.error(`[Voice] Opus stream error for ${userId}:`, err.message);
             forceEndStream();
@@ -466,14 +369,7 @@ function setupReceiver(connection, guildId) {
 
         const maxDurationTimer = setTimeout(forceEndStream, 30000);
 
-        // --- Wake-word gating (Rustpotter, in-process) ---
-        // Runs entirely inside this Node process now - no HTTP round
-        // trip, no Python involvement. Detector instances are cached per
-        // Discord user (see getDetectorForUser) and fed every PCM chunk
-        // as it streams in below, frame-aligned via feedPCMToDetector's
-        // residual carryover - not via periodic re-snapshotting like the
-        // old /wake_check design, since Rustpotter expects each sample
-        // fed exactly once, in order.
+        // Rustpotter runs in-process here, no Python round trip - detectors cached per user.
         let wakeConfirmed = false;
         let matchedWakeWord = null;
         let detectorEntry = null;
@@ -498,13 +394,8 @@ function setupReceiver(connection, guildId) {
                 );
         }
 
-        // --- Live "listening..." indicator ---
-        // Only runs during the active/awake window (bounded, default
-        // 60s) - NOT for every VAD-detected sound like the old version,
-        // which is what made it expensive before. STT here reuses the
-        // same googleSTT() call that runs at utterance end anyway, just
-        // invoked earlier/more often on the growing buffer for live
-        // feedback.
+        // Only runs during the active/awake window, not on every VAD sound - reuses the same
+        // googleSTT() call utterance-end uses anyway, just invoked earlier for live feedback.
         const PARTIAL_INTERVAL_MS = 1500;
         const PARTIAL_MIN_NEW_BYTES = 24000;
         let lastPartialLength = 0;
@@ -700,20 +591,8 @@ function setupReceiver(connection, guildId) {
                 return;
             }
 
-            // Whether this utterance is worth transcribing at all:
-            //   - isGuildActive(): already awake, no need to repeat the
-            //     wake word (this is also what makes the live "listening"
-            //     indicator above meaningful - same window).
-            //   - wakeConfirmed: our in-process Rustpotter detector matched this
-            //     user's voice against their enrolled samples.
-            // There is deliberately no "unenrolled users always get
-            // transcribed" fallback anymore - that existed only to feed
-            // the Python side's old text-similarity wake-word matching,
-            // which has been removed (it was exactly the always-on
-            // recognition overhead this Rustpotter migration was meant to
-            // get rid of). An unenrolled user simply can't wake the bot
-            // by voice until they run /sound.
-            const shouldTranscribe = isGuildActive(guildId) || wakeConfirmed;
+            const shouldTranscribe =
+                isGuildActive(guildId) || wakeConfirmed || wakeWordOptedOut.has(userId);
 
             if (!shouldTranscribe) {
                 if (partialSent) {
@@ -800,19 +679,7 @@ app.post('/leave', (req, res) => {
     }
     connection.destroy();
 
-    // Every one of these is per-guild state that used to survive a
-    // /leave untouched. Most critically: if isPlaying was still true
-    // (e.g. TTS got cut off mid-playback by the destroy() above, or
-    // was never cleanly resolved), the NEXT /join's audio would hit
-    // `if (isPlaying.get(guildId)) return;` at the very top of the PCM
-    // data handler and get silently dropped forever - STT and wake
-    // detection both stop working, with no error, until the whole bot
-    // restarts. Same idea for a stale `players` entry: playNextInQueue
-    // reuses whatever's cached instead of creating a fresh one, so a
-    // leftover player from the destroyed connection could end up
-    // "subscribed" to nothing and never reach Idle, which is exactly
-    // what a permanently-on "speaking" indicator on the next join looks
-    // like from the outside.
+    // Without this, a stale isPlaying/players entry silently breaks STT/wake detection on the next /join.
     connections.delete(guild_id);
     players.delete(guild_id);
     audioQueues.delete(guild_id);
@@ -823,12 +690,8 @@ app.post('/leave', (req, res) => {
     res.json({ success: true });
 });
 
-// Tracks whether the audio that just finished playing for a guild
-// should be treated as a real conversational turn (extends the "stay
-// awake" window) or not (e.g. wake-word enrollment sample playback -
-// see EnrollmentManager._play_audio's suppress_active_window). Set
-// whenever an item is shifted off the queue to play; read once the
-// queue drains and playback is fully idle again.
+// Whether the audio that just finished playing should extend the "stay awake" window
+// (false for wake-word enrollment sample playback - see suppress_active_window).
 const suppressNotifyMap = new Map();
 
 async function notifyTtsFinished(guild_id) {
@@ -911,25 +774,13 @@ app.post('/play', express.raw({ type: 'application/octet-stream', limit: '20mb' 
 
 app.post('/interrupt', (req, res) => {
     const { guild_id } = req.body;
-    // Same mechanism the VAD loud-voice check uses (interruptTTS) - this
-    // just gives Python a way to trigger it directly, for the case where
-    // a new recognized utterance should cut off whatever's currently
-    // playing regardless of how loud it was (see VoiceCog.handle_stt_input,
-    // which calls this before starting a new turn whenever a previous
-    // one was still in flight).
+    // Lets Python trigger the same cutoff the VAD loud-voice check uses, regardless of volume.
     interruptTTS(guild_id);
     res.json({ success: true });
 });
 
 app.post('/invalidate_detector', (req, res) => {
-    // Called by EnrollmentManager._commit_enrollment right after a
-    // NEW .rpw is successfully built. Without this, detectorCache (keyed
-    // only by user_id, loaded once and cached forever) keeps serving
-    // whatever detector - built from an OLDER recording, possibly for a
-    // completely different word - was cached the first time this user
-    // was ever checked, no matter how many times they re-enroll. That's
-    // enough on its own to make every wake attempt score exactly 0
-    // forever: it's not comparing against the word that was just said.
+    // Without this, detectorCache keeps serving the OLD .rpw after a user re-enrolls.
     const { user_id } = req.body;
     const deleted = detectorCache.delete(user_id);
     console.log(`[Wake] Invalidated cached detector for ${user_id} (was cached: ${deleted})`);
@@ -937,17 +788,8 @@ app.post('/invalidate_detector', (req, res) => {
 });
 
 app.post('/build_wakeword', async (req, res) => {
-    // Builds a .rpw wake-word reference directly from the accepted
-    // enrollment wav samples, entirely in-process via rustpotter-web's
-    // WakewordRefCreator - see EnrollmentManager._build_rustpotter_reference
-    // in cogs/voice/enrollment.py, which used to shell out to a
-    // separately-downloaded rustpotter-cli binary for this exact step.
-    // That meant an extra install-time download (GitHub Releases API,
-    // OS/arch guessing, no checksum verification) just to run a build
-    // command whose only real job was calling the same builder API this
-    // now calls directly. Nothing else about .rpw files changes: the
-    // hot-path detector (getDetectorForUser) still just loads the bytes
-    // this returns, the same as it always did.
+    // Builds a .rpw reference in-process via rustpotter-web's WakewordRefCreator, instead of
+    // shelling out to a separately-downloaded rustpotter-cli binary like this used to.
     try {
         const { name, samples } = req.body;
         if (!name || !Array.isArray(samples) || samples.length === 0) {
@@ -1005,6 +847,14 @@ app.post('/set_active', (req, res) => {
     if (!guild_id || !active_until)
         return res.status(400).json({ error: 'guild_id and active_until required' });
     activeUntil.set(guild_id, active_until);
+    res.json({ success: true });
+});
+
+app.post('/set_wake_word_required', (req, res) => {
+    const { user_id, required } = req.body;
+    if (!user_id) return res.status(400).json({ error: 'user_id required' });
+    if (required) wakeWordOptedOut.delete(user_id);
+    else wakeWordOptedOut.add(user_id);
     res.json({ success: true });
 });
 
