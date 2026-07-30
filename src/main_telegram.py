@@ -240,6 +240,9 @@ async def run_telegram(stop_event: asyncio.Event) -> None:
         await app.post_init(app)
     await app.start()
     await app.updater.start_polling(allowed_updates=Update.ALL_TYPES)
+    from core import platform_health
+
+    platform_health.set_status("telegram", "running")
     try:
         await stop_event.wait()
     finally:

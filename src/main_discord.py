@@ -190,6 +190,9 @@ async def _supervise_voice_process(voice_dir: str):
 @bot.event
 async def on_ready():
     logger.info(f"✅ Bot is fully online and ready! Logged in as {bot.user}")
+    from core import platform_health
+
+    platform_health.set_status("discord", "running")
 
 
 def _terminate_voice_process():

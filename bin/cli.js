@@ -8,6 +8,7 @@ const {
     getSettings,
     platformState,
     getSessions,
+    getPlatformHealth,
     LGY_PM2_NAME,
     LGY_SCRIPT_PATH,
 } = require('./platforms');
@@ -289,6 +290,7 @@ if (cmd === 'version' || cmd === '-v' || cmd === '--version') {
 } else if (cmd === 'status') {
     const settings = getSettings();
     const sessions = getSessions();
+    const health = getPlatformHealth();
 
     let pm2Procs = [];
     const jlist = spawnSync('npx', ['-y', 'pm2', 'jlist'], { stdio: 'pipe' });
@@ -304,19 +306,41 @@ if (cmd === 'version' || cmd === '-v' || cmd === '--version') {
     } else {
         const mem = proc.monit ? `${Math.round(proc.monit.memory / 1024 / 1024)}mb` : '?';
         const cpu = proc.monit ? `${proc.monit.cpu}%` : '?';
+        const uptimeMs = proc.pm2_env.status === 'online' ? Date.now() - proc.pm2_env.pm_uptime : 0;
         const uptime =
             proc.pm2_env.status === 'online' ? formatUptime(proc.pm2_env.pm_uptime) : '-';
+        const restarts = proc.pm2_env.restart_time;
         console.log(
-            `\n${color.cyan}▶${color.reset} daemon: ${proc.pm2_env.status} (uptime: ${uptime}, restarts: ${proc.pm2_env.restart_time}, cpu: ${cpu}, mem: ${mem})\n`,
+            `\n${color.cyan}▶${color.reset} daemon: ${proc.pm2_env.status} (uptime: ${uptime}, restarts: ${restarts}, cpu: ${cpu}, mem: ${mem})\n`,
         );
+        // Flag "many restarts" only alongside a short current uptime - restart_time alone is cumulative, not live.
+        if (
+            proc.pm2_env.status === 'online' &&
+            restarts > 5 &&
+            uptimeMs > 0 &&
+            uptimeMs < 5 * 60 * 1000
+        ) {
+            console.log(
+                `${color.yellow}⚠${color.reset}  ${restarts} restarts and only ${uptime} of uptime - looks like it's crash-looping. Run ${color.cyan}lgy logs${color.reset} to see why.\n`,
+            );
+        }
     }
 
     const rows = Object.entries(PLATFORMS).map(([key, def]) => {
         const { enabled } = platformState(key, settings);
         const sessionCount = Object.values(sessions).filter((s) => s.platform === key).length;
-        return [def.label, enabled ? 'yes' : 'no', String(sessionCount)];
+        const h = health[key];
+        let connection = '-';
+        if (enabled) {
+            if (!h) connection = 'unknown';
+            else if (h.status === 'running') connection = 'connected';
+            else if (h.status === 'connecting') connection = 'connecting...';
+            else if (h.status === 'error') connection = `error: ${h.detail || '?'}`;
+            else if (h.status === 'stopped') connection = 'stopped';
+        }
+        return [def.label, enabled ? 'yes' : 'no', connection, String(sessionCount)];
     });
-    console.log(renderTable(['platform', 'enabled', 'sessions'], rows));
+    console.log(renderTable(['platform', 'enabled', 'connection', 'sessions'], rows));
     console.log();
 } else if (cmd === 'enable') {
     if (isWin) {
