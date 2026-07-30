@@ -5,6 +5,7 @@ const os = require('os');
 const workspaceDir = path.join(os.homedir(), '.gemini', 'linkgravity');
 const settingsPath = path.join(workspaceDir, 'lgy.json');
 const sessionsPath = path.join(workspaceDir, 'data', 'sessions.json');
+const healthPath = path.join(workspaceDir, 'data', 'platform_health.json');
 
 if (!fs.existsSync(workspaceDir)) fs.mkdirSync(workspaceDir, { recursive: true });
 
@@ -34,6 +35,16 @@ function getSessions() {
     return {};
 }
 
+// Written live by main.py - distinct from `enabled`, which is just the static config flag.
+function getPlatformHealth() {
+    if (fs.existsSync(healthPath)) {
+        try {
+            return JSON.parse(fs.readFileSync(healthPath, 'utf8'));
+        } catch (e) {}
+    }
+    return {};
+}
+
 // Both platforms now run in one shared pm2 process - main.py checks discord_enabled/telegram_enabled at startup.
 const LGY_PM2_NAME = 'lgy';
 const LGY_SCRIPT_PATH = path.join(__dirname, '..', 'src', 'main.py');
@@ -41,10 +52,15 @@ const LGY_SCRIPT_PATH = path.join(__dirname, '..', 'src', 'main.py');
 const PLATFORMS = {
     discord: { label: 'Discord' },
     telegram: { label: 'Telegram' },
+    slack: { label: 'Slack' },
 };
 
 function platformState(key, settings) {
-    const configured = !!settings[`${key}_token`];
+    // Slack needs two tokens (bot + app-level, for Socket Mode) instead of the single `${key}_token` the others use.
+    const configured =
+        key === 'slack'
+            ? !!(settings.slack_bot_token && settings.slack_app_token)
+            : !!settings[`${key}_token`];
     const enabled = settings[`${key}_enabled`] ?? (key === 'discord' && configured);
     return { configured, enabled };
 }
@@ -56,6 +72,7 @@ module.exports = {
     getSettings,
     updateSettings,
     getSessions,
+    getPlatformHealth,
     LGY_PM2_NAME,
     LGY_SCRIPT_PATH,
     PLATFORMS,

@@ -317,9 +317,52 @@ async function configureTelegram(existingSettings) {
     return updates;
 }
 
+async function configureSlack(existingSettings) {
+    p.note(
+        'Create a Slack app at api.slack.com/apps, enable Socket Mode, and add an app-level token with the ' +
+            '`connections:write` scope (Basic Information → App-Level Tokens). The bot token (starts with xoxb-) ' +
+            'is under OAuth & Permissions.',
+        'Slack App Setup',
+    );
+
+    const slackBotToken = await p.password({
+        message: 'Slack Bot Token (xoxb-..., leave empty to keep current):',
+    });
+    if (p.isCancel(slackBotToken)) {
+        p.cancel('Setup cancelled.');
+        process.exit(0);
+    }
+
+    const slackAppToken = await p.password({
+        message: 'Slack App-Level Token (xapp-..., leave empty to keep current):',
+    });
+    if (p.isCancel(slackAppToken)) {
+        p.cancel('Setup cancelled.');
+        process.exit(0);
+    }
+
+    p.note(
+        'Slack has no channel/server gating yet, and threads have no title surface (same as Telegram) - ' +
+            'there is no voice support yet either.',
+        'Slack Access',
+    );
+
+    const existingSlackUserIds = existingSettings.slack_allowed_user_ids
+        ? splitIds(existingSettings.slack_allowed_user_ids)
+        : [];
+    const slackUserIds = await collectUserIds(existingSlackUserIds, 'Slack');
+
+    const updates = {};
+    if (slackBotToken) updates.slack_bot_token = slackBotToken;
+    if (slackAppToken) updates.slack_app_token = slackAppToken;
+    if (slackUserIds !== null) updates.slack_allowed_user_ids = slackUserIds.join(',');
+    return updates;
+}
+
 const CONFIGURERS = {
     discord: configureDiscord,
     telegram: configureTelegram,
+    slack: configureSlack,
 };
 
 function applyDaemonState() {

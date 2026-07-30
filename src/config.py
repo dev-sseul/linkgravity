@@ -17,6 +17,9 @@ DEFAULT_LGY_CONFIG = {
     "discord_token": "",
     "telegram_token": "",
     "telegram_allowed_user_ids": "",
+    "slack_bot_token": "",
+    "slack_app_token": "",
+    "slack_allowed_user_ids": "",
     "session_scopes": [],
     "allowed_user_ids": "",
     # user_id (str) -> registered word, one per person (see EnrollmentManager._commit_enrollment).
@@ -76,6 +79,8 @@ logger = init_logger(WORKSPACE_DIR)
 
 DISCORD_TOKEN = bot_settings.get("discord_token", "")
 TELEGRAM_TOKEN = bot_settings.get("telegram_token", "")
+SLACK_BOT_TOKEN = bot_settings.get("slack_bot_token", "")
+SLACK_APP_TOKEN = bot_settings.get("slack_app_token", "")
 
 
 def _parse_session_scopes(raw_scopes) -> dict:
@@ -100,6 +105,8 @@ def _parse_session_scopes(raw_scopes) -> dict:
 SESSION_SCOPES = _parse_session_scopes(bot_settings.get("session_scopes"))
 ALLOWED_IDS = set(int(x) for x in bot_settings.get("allowed_user_ids", "").split(",") if x.strip())
 TELEGRAM_ALLOWED_IDS = set(int(x) for x in bot_settings.get("telegram_allowed_user_ids", "").split(",") if x.strip())
+# Slack user IDs are strings (e.g. "U0123ABC"), unlike Discord/Telegram's numeric IDs.
+SLACK_ALLOWED_IDS = set(x.strip() for x in bot_settings.get("slack_allowed_user_ids", "").split(",") if x.strip())
 TTS_VOICE = bot_settings.get("tts_voice", "ko-KR-SunHiNeural")
 
 
@@ -140,6 +147,12 @@ AGY_BIN = os.getenv("AGY_BIN_PATH", str(Path.home() / ".local/bin/agy"))
 session_manager = SessionManager(DATA_DIR)
 
 
-def allowed(user_id: int, platform: str = "discord") -> bool:
-    ids = TELEGRAM_ALLOWED_IDS if platform == "telegram" else ALLOWED_IDS
+def allowed(user_id, platform: str = "discord") -> bool:
+    if platform == "telegram":
+        ids = TELEGRAM_ALLOWED_IDS
+    elif platform == "slack":
+        ids = SLACK_ALLOWED_IDS
+        user_id = str(user_id)  # Slack IDs are strings, not ints like Discord/Telegram
+    else:
+        ids = ALLOWED_IDS
     return not ids or user_id in ids
