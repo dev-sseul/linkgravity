@@ -1,10 +1,21 @@
-require('./logger'); // side-effect: timestamps console.log/error - must load before anything else logs
+require('./logger');
 
 const { Client, GatewayIntentBits, Events } = require('discord.js');
 const express = require('express');
 
 const { aglConfig } = require('./config');
 const state = require('./state');
+
+process.on('unhandledRejection', (reason) => {
+    console.error('Unhandled promise rejection (voice service stays alive):', reason);
+});
+
+process.on('uncaughtException', (err) => {
+    // Logs the cause before exiting - an unhandled sync error used to kill the process with no trace.
+    console.error('Uncaught exception - voice service is exiting:', err);
+    process.exit(1);
+});
+
 const { registerRoutes } = require('./routes');
 
 if (aglConfig.voice_threshold) {
@@ -23,16 +34,6 @@ client.once(Events.ClientReady, () => {
 });
 
 registerRoutes(app, client);
-
-process.on('unhandledRejection', (reason) => {
-    console.error('Unhandled promise rejection (voice service stays alive):', reason);
-});
-
-process.on('uncaughtException', (err) => {
-    // Logs the cause before exiting - an unhandled sync error used to kill the process with no trace.
-    console.error('Uncaught exception - voice service is exiting:', err);
-    process.exit(1);
-});
 
 // Without this, SIGTERM (lgy stop/restart) kills the process mid-connection and Discord never gets a clean leave.
 function shutdownGracefully() {

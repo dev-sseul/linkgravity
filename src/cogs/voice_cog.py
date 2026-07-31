@@ -153,6 +153,33 @@ class VoiceCog(commands.Cog):
             opts.append(app_commands.Choice(name=other_val, value=other_val.lower()))
         return opts
 
+    async def require_wake_word_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        is_on = self._wake_word_required(interaction.user.id)
+        current_val = "ON" if is_on else "OFF"
+        other_val = "OFF" if is_on else "ON"
+
+        opts = []
+        if current.lower() in current_val.lower() or not current:
+            opts.append(app_commands.Choice(name=f"{current_val} (current)", value=current_val.lower()))
+        if current.lower() in other_val.lower():
+            opts.append(app_commands.Choice(name=other_val, value=other_val.lower()))
+        return opts
+
+    async def tts_speed_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[float]]:
+        current_val = float(self.bot_settings.get("tts_speed", 1.0))
+        opts = []
+        if str(current_val) in current or not current:
+            opts.append(app_commands.Choice(name=f"{current_val}x (current)", value=current_val))
+
+        for v in [0.75, 1.0, 1.25, 1.3, 1.5, 1.75, 2.0]:
+            if v != current_val and len(opts) < 25:
+                opts.append(app_commands.Choice(name=f"{v}x", value=v))
+        return opts
+
     @app_commands.command(name="join", description="Summon the bot to your current voice channel")
     async def cmd_join(self, interaction: discord.Interaction):
         if not allowed(interaction.user.id):
@@ -175,7 +202,7 @@ class VoiceCog(commands.Cog):
             await interaction.response.send_message("❌ Please join a voice channel first.", ephemeral=True)
             return
 
-        vc_chan = interaction.user.voice.channel
+        voice_channel = interaction.user.voice.channel
         guild_id = interaction.guild_id
 
         wake_word_map = self.bot_settings.get("wake_words") or {}
@@ -183,23 +210,26 @@ class VoiceCog(commands.Cog):
         active_timer = self.bot_settings.get("active_timer", 60)
         required = self._wake_word_required(interaction.user.id)
 
-        if own_word:
-            msg = (
-                f"🎤 Connected to `{vc_chan.name}`.\n"
-                f"💡 Say `{own_word}` to activate me. Once awake, I'll keep listening for {active_timer} seconds after each interaction.\n"
-                f"⚙️ You can customize settings using `/sound`."
+        header = f"🎤 Connected to `{voice_channel.name}`."
+        sound_tip = "⚙️ You can customize settings using `/sound`."
+
+        if not required:
+            body = "💡 Wake word is off for you - just talk, I'm listening."
+        elif own_word:
+            body = (
+                f"💡 Say `{own_word}` to activate me. Once awake, "
+                f"I'll keep listening for {active_timer} seconds after each interaction."
             )
-        elif not required:
-            msg = f"🎤 Connected to `{vc_chan.name}`.\n💡 Wake word is off for you - just talk, I'm listening."
         else:
-            msg = (
-                f"🎤 Connected to `{vc_chan.name}`.\n"
-                f"🎙️ You haven't set up a wake word yet, so I can't hear you - run `/sound wake_word:<word>` "
-                f"and say your chosen word a few times to register it in your voice.\n"
-                f"💡 A wake word keeps everyone else's side conversation from triggering me by accident, and "
-                f"avoids running speech recognition on audio that isn't meant for me. If you use push-to-talk, "
-                f"turning it off with `/sound require_wake_word:off` is recommended instead."
+            body = (
+                "🎙️ You haven't set up a wake word yet, so I can't hear you - run `/sound wake_word:<word>` "
+                "and say your chosen word a few times to register it in your voice.\n"
+                "💡 A wake word keeps everyone else's side conversation from triggering me by accident, and "
+                "avoids running speech recognition on audio that isn't meant for me. If you use push-to-talk, "
+                "turning it off with `/sound require_wake_word:off` is recommended instead."
             )
+
+        msg = "\n".join([header, body, sound_tip])
         await interaction.response.send_message(msg)
 
         self.stt_session.clear_active_window(str(guild_id))  # don't inherit a window left open by a prior /join
@@ -212,7 +242,7 @@ class VoiceCog(commands.Cog):
                     self.logger.warning(f"Failed to call /leave before /join: {e}")
 
                 resp = await session.post(
-                    f"{NODE_VOICE_API}/join", json={"guild_id": str(guild_id), "channel_id": str(vc_chan.id)}
+                    f"{NODE_VOICE_API}/join", json={"guild_id": str(guild_id), "channel_id": str(voice_channel.id)}
                 )
                 if not required:
                     # Node's opt-out set is in-memory and won't survive a Node restart, unlike our own bot_settings.
@@ -268,6 +298,8 @@ class VoiceCog(commands.Cog):
         threshold=threshold_autocomplete,
         tts_voice=tts_voice_autocomplete,
         tts_enabled=tts_enabled_autocomplete,
+        tts_speed=tts_speed_autocomplete,
+        require_wake_word=require_wake_word_autocomplete,
     )
     async def cmd_voice(
         self,
@@ -525,15 +557,16 @@ class VoiceCog(commands.Cog):
                     self.logger.warning(f"Failed to interrupt playback for guild {guild_id}: {e}")
             self._active_turns[str(guild_id)] = asyncio.current_task()
 
-            user = self.bot.get_user(int(user_id))
-            if not user:
+            guild = self.bot.get_guild(int(guild_id))
+            member = guild.get_member(int(user_id)) if guild else None
+            if guild and not member:
                 try:
-                    user = await self.bot.fetch_user(int(user_id))
+                    member = await guild.fetch_member(int(user_id))
                 except discord.NotFound:
                     pass
                 except discord.HTTPException as e:
-                    self.logger.warning(f"fetch_user failed for {user_id}: {e}")
-            username = user.display_name if user else f"User {user_id}"
+                    self.logger.warning(f"fetch_member failed for {user_id}: {e}")
+            username = member.display_name if member else f"User {user_id}"
             await self.stt_session.finalize_partial_msg(str(guild_id), thread, f"🎤 **{username}**: {text}")
 
             if not text_to_ai:
@@ -591,9 +624,10 @@ class VoiceCog(commands.Cog):
 
                         from utils.utils import generate_thread_title, update_agy_conversation_title
 
-                        new_title = await generate_thread_title(text_to_ai, raw_ans)
-                        await get_adapter_for_platform("discord").rename_conversation(thread, new_title)
-                        await update_agy_conversation_title(new_conv_id, new_title)
+                        if thread.name.startswith("Session-"):
+                            new_title = await generate_thread_title(text_to_ai, raw_ans)
+                            await get_adapter_for_platform("discord").rename_conversation(thread, new_title)
+                            await update_agy_conversation_title(new_conv_id, new_title)
                     else:
                         logger.debug("Voice: calling agy_send...")
                         raw_ans = await self.agy_send(
