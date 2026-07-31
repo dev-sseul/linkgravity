@@ -153,6 +153,33 @@ class VoiceCog(commands.Cog):
             opts.append(app_commands.Choice(name=other_val, value=other_val.lower()))
         return opts
 
+    async def require_wake_word_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        is_on = self._wake_word_required(interaction.user.id)
+        current_val = "ON" if is_on else "OFF"
+        other_val = "OFF" if is_on else "ON"
+
+        opts = []
+        if current.lower() in current_val.lower() or not current:
+            opts.append(app_commands.Choice(name=f"{current_val} (current)", value=current_val.lower()))
+        if current.lower() in other_val.lower():
+            opts.append(app_commands.Choice(name=other_val, value=other_val.lower()))
+        return opts
+
+    async def tts_speed_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[float]]:
+        current_val = float(self.bot_settings.get("tts_speed", 1.0))
+        opts = []
+        if str(current_val) in current or not current:
+            opts.append(app_commands.Choice(name=f"{current_val}x (current)", value=current_val))
+
+        for v in [0.75, 1.0, 1.25, 1.3, 1.5, 1.75, 2.0]:
+            if v != current_val and len(opts) < 25:
+                opts.append(app_commands.Choice(name=f"{v}x", value=v))
+        return opts
+
     @app_commands.command(name="join", description="Summon the bot to your current voice channel")
     async def cmd_join(self, interaction: discord.Interaction):
         if not allowed(interaction.user.id):
@@ -268,6 +295,8 @@ class VoiceCog(commands.Cog):
         threshold=threshold_autocomplete,
         tts_voice=tts_voice_autocomplete,
         tts_enabled=tts_enabled_autocomplete,
+        tts_speed=tts_speed_autocomplete,
+        require_wake_word=require_wake_word_autocomplete,
     )
     async def cmd_voice(
         self,
@@ -591,9 +620,10 @@ class VoiceCog(commands.Cog):
 
                         from utils.utils import generate_thread_title, update_agy_conversation_title
 
-                        new_title = await generate_thread_title(text_to_ai, raw_ans)
-                        await get_adapter_for_platform("discord").rename_conversation(thread, new_title)
-                        await update_agy_conversation_title(new_conv_id, new_title)
+                        if thread.name.startswith("Session-"):
+                            new_title = await generate_thread_title(text_to_ai, raw_ans)
+                            await get_adapter_for_platform("discord").rename_conversation(thread, new_title)
+                            await update_agy_conversation_title(new_conv_id, new_title)
                     else:
                         logger.debug("Voice: calling agy_send...")
                         raw_ans = await self.agy_send(
