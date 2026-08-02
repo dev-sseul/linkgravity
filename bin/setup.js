@@ -33,25 +33,39 @@ async function collectSessionScopes(existingScopes) {
         'Server / Channel Access',
     );
 
+    if (hasExisting) {
+        const summary = existingScopes
+            .map(
+                (s) =>
+                    `${s.guild_id}${s.channel_ids.length ? ` (channels: ${s.channel_ids.join(', ')})` : ' (whole server)'}`,
+            )
+            .join('; ');
+        p.note(`Current server/channel settings: ${summary}`, 'Current Setting');
+
+        const change = await p.confirm({
+            message: 'Change the server/channel access list?',
+            initialValue: false,
+        });
+        if (p.isCancel(change)) {
+            p.cancel('Setup cancelled.');
+            process.exit(0);
+        }
+        if (!change) return null; // keep existing config untouched
+    }
+
     let isFirst = true;
     while (true) {
-        const promptSuffix =
-            isFirst && hasExisting
-                ? ' (leave empty to keep your current server/channel settings entirely unchanged)'
-                : ' (leave empty if you have no more servers to add)';
-
         const guildId = await p.text({
-            message: `Server (Guild) ID to allow${promptSuffix}. Right-click the SERVER NAME (not a channel) → Copy Server ID:`,
+            message: isFirst
+                ? 'Server (Guild) ID to allow. Right-click the SERVER NAME (not a channel) → Copy Server ID ' +
+                  '(leave empty if done - an empty list means /new works nowhere):'
+                : 'Another server ID to add (leave empty if done):',
         });
         if (p.isCancel(guildId)) {
             p.cancel('Setup cancelled.');
             process.exit(0);
         }
-
-        if (!guildId) {
-            if (isFirst) return null; // signal: user wants to keep existing config untouched
-            break;
-        }
+        if (!guildId) break;
         isFirst = false;
 
         const channelIds = [];
@@ -103,30 +117,41 @@ async function collectUserIds(existingIds, platformLabel) {
     const hasExisting = existingIds && existingIds.length > 0;
 
     p.note(
-        'ONLY these users can use the bot (leave completely empty on first setup to allow EVERYONE). ' +
+        'ONLY these users can use the bot (leave completely empty to allow EVERYONE). ' +
             'Not related to DMs - this only gates the channel/threads configured above.',
         `Allowed ${platformLabel} Users`,
     );
 
+    if (hasExisting) {
+        p.note(
+            `Current allowed ${platformLabel} users: ${existingIds.join(', ')}`,
+            'Current Setting',
+        );
+
+        const change = await p.confirm({
+            message: `Change the allowed-user list for ${platformLabel}?`,
+            initialValue: false,
+        });
+        if (p.isCancel(change)) {
+            p.cancel('Setup cancelled.');
+            process.exit(0);
+        }
+        if (!change) return null; // keep existing config untouched
+    }
+
     let isFirst = true;
     while (true) {
-        const promptSuffix =
-            isFirst && hasExisting
-                ? ' (leave empty to keep your current allowed-user settings entirely unchanged)'
-                : ' (leave empty if you have no more users to add)';
-
         const userId = await p.text({
-            message: `${platformLabel} User ID to allow${promptSuffix}:`,
+            message: isFirst
+                ? `${platformLabel} User ID to allow (leave empty to allow EVERYONE):`
+                : `Another ${platformLabel} user ID to allow (leave empty if done):`,
         });
         if (p.isCancel(userId)) {
             p.cancel('Setup cancelled.');
             process.exit(0);
         }
 
-        if (!userId) {
-            if (isFirst) return null; // signal: keep existing config untouched
-            break;
-        }
+        if (!userId) break;
         isFirst = false;
 
         ids.push(userId.trim());
@@ -390,13 +415,12 @@ async function platformMenu(key) {
         );
         if (configured)
             options.push({ value: 'edit', label: 'Edit settings (token, access, etc.)' });
-        options.push({ value: 'back', label: '← Back' });
 
         const action = await p.select({
-            message: `${def.label} — currently ${enabled ? 'ON' : 'OFF'}${configured ? '' : ' (not configured)'}`,
+            message: `${def.label} — currently ${enabled ? 'ON' : 'OFF'}${configured ? '' : ' (not configured)'} (Esc to go back)`,
             options,
         });
-        if (p.isCancel(action) || action === 'back') return;
+        if (p.isCancel(action)) return;
 
         if (action === 'off') {
             updateSettings({ [`${key}_enabled`]: false });
