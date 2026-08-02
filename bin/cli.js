@@ -256,10 +256,27 @@ function findAgyBin() {
 function getPm2Proc() {
     const jlist = spawnSync('npx', ['-y', 'pm2', 'jlist'], { stdio: 'pipe' });
     if (jlist.status !== 0) return null;
+
+    // pm2 sometimes prints a version-mismatch banner ("In-memory PM2 is
+    // out-of-date...") before the JSON when the CLI version differs from
+    // the already-running daemon's - skip past it instead of choking on it.
+    const out = jlist.stdout.toString();
+    const jsonStart = out.indexOf('[');
+    if (jsonStart === -1) {
+        console.error(
+            `${color.yellow}⚠${color.reset} Couldn't read pm2 status (unexpected output, no JSON found). Raw output:\n${out.trim()}`,
+        );
+        return null;
+    }
+
     try {
-        const procs = JSON.parse(jlist.stdout.toString());
+        const procs = JSON.parse(out.slice(jsonStart));
         return procs.find((p) => p.name === LGY_PM2_NAME) || null;
     } catch (e) {
+        console.error(
+            `${color.yellow}⚠${color.reset} Couldn't parse pm2 status output: ${e.message}. ` +
+                `If you saw a version-mismatch warning above, try ${color.cyan}npx pm2 update${color.reset}.`,
+        );
         return null;
     }
 }

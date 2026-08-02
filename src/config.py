@@ -112,11 +112,15 @@ TTS_VOICE = bot_settings.get("tts_voice", "ko-KR-SunHiNeural")
 
 def is_allowed_session_channel(channel) -> bool:
     """True if a new agy session may be started from this channel (via
-    /new). A channel is allowed if its server is in SESSION_SCOPES AND
-    either that server has no channel restriction (whole-server access)
-    or this specific channel is in its allowed list."""
+    /new). DMs have no guild to scope, so they're always allowed here -
+    gating for DMs is handled separately via ALLOWED_IDS. For a guild
+    channel, it's allowed if its server is in SESSION_SCOPES AND either
+    that server has no channel restriction (whole-server access) or this
+    specific channel is in its allowed list."""
     guild = getattr(channel, "guild", None)
-    if not guild or guild.id not in SESSION_SCOPES:
+    if not guild:
+        return True
+    if guild.id not in SESSION_SCOPES:
         return False
     allowed_channels = SESSION_SCOPES[guild.id]
     return allowed_channels is None or channel.id in allowed_channels
