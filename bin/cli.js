@@ -246,10 +246,12 @@ if (cmd === 'version' || cmd === '-v' || cmd === '--version') {
 } else if (cmd === 'stop') {
     info('Stopping LinkGravity daemon...');
     runPm2(['stop', LGY_PM2_NAME]);
+    runPm2(['reset', LGY_PM2_NAME]);
     success('Daemon stopped successfully.\n');
 } else if (cmd === 'restart') {
     info('Restarting LinkGravity daemon...');
     runPm2(['restart', LGY_PM2_NAME, '--update-env']);
+    runPm2(['reset', LGY_PM2_NAME]);
     verifyStartup().then((ok) => process.exit(ok ? 0 : 1));
 } else if (cmd === 'logs') {
     const SHORT_FLAGS = ['-f', '-n', '-t'];
@@ -310,9 +312,21 @@ if (cmd === 'version' || cmd === '-v' || cmd === '--version') {
         const uptime =
             proc.pm2_env.status === 'online' ? formatUptime(proc.pm2_env.pm_uptime) : '-';
         const restarts = proc.pm2_env.restart_time;
+        const statusColor = proc.pm2_env.status === 'online' ? color.green : color.red;
+
         console.log(
-            `\n${color.cyan}▶${color.reset} daemon: ${proc.pm2_env.status} (uptime: ${uptime}, restarts: ${restarts}, cpu: ${cpu}, mem: ${mem})\n`,
+            `\n${color.cyan}▶${color.reset} daemon: ${statusColor}${proc.pm2_env.status}${color.reset}`,
         );
+        for (const [label, value] of [
+            ['uptime', uptime],
+            ['restarts', restarts],
+            ['cpu', cpu],
+            ['mem', mem],
+        ]) {
+            console.log(`    ${label.padEnd(9)} ${value}`);
+        }
+        console.log();
+
         // Flag "many restarts" only alongside a short current uptime - restart_time alone is cumulative, not live.
         if (
             proc.pm2_env.status === 'online' &&
@@ -331,16 +345,18 @@ if (cmd === 'version' || cmd === '-v' || cmd === '--version') {
         const sessionCount = Object.values(sessions).filter((s) => s.platform === key).length;
         const h = health[key];
         let connection = '-';
+        let since = '-';
         if (enabled) {
             if (!h) connection = 'unknown';
             else if (h.status === 'running') connection = 'connected';
             else if (h.status === 'connecting') connection = 'connecting...';
             else if (h.status === 'error') connection = `error: ${h.detail || '?'}`;
             else if (h.status === 'stopped') connection = 'stopped';
+            if (h && h.at) since = formatUptime(new Date(h.at).getTime());
         }
-        return [def.label, enabled ? 'yes' : 'no', connection, String(sessionCount)];
+        return [def.label, enabled ? 'yes' : 'no', connection, since, String(sessionCount)];
     });
-    console.log(renderTable(['platform', 'enabled', 'connection', 'sessions'], rows));
+    console.log(renderTable(['platform', 'enabled', 'connection', 'since', 'sessions'], rows));
     console.log();
 } else if (cmd === 'enable') {
     if (isWin) {
@@ -409,6 +425,7 @@ if (cmd === 'version' || cmd === '-v' || cmd === '--version') {
     });
 
     if (restartResult.status === 0) {
+        runPm2(['reset', LGY_PM2_NAME]);
         verifyStartup().then((ok) => process.exit(ok ? 0 : 1));
     } else if ((restartResult.stderr || '').toString().includes('not found')) {
         // Wasn't running before the update - start fresh instead of a false "restarted".

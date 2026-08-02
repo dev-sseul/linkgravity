@@ -139,12 +139,11 @@ async def cmd_credit(ack, body, respond, context) -> None:
         await respond("❌ Denied")
         return
 
-    import os
     from pathlib import Path
 
     from core.atomic_io import atomic_write_json, safe_load_json
 
-    settings_path = Path(os.getenv("HOME", "/root")) / ".gemini/antigravity-cli/settings.json"
+    settings_path = Path.home() / ".gemini/antigravity-cli/settings.json"
     current = bool(safe_load_json(settings_path, {}, logger=logger).get("useG1Credits", False))
 
     async def set_credit(use_credits: bool, action_body, client) -> None:

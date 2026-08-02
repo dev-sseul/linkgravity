@@ -242,7 +242,7 @@ class GeneralCog(commands.Cog):
         if not allowed(interaction.user.id):
             return await interaction.response.send_message("❌ Denied", ephemeral=True)
 
-        settings_path = Path(os.getenv("HOME", "/root")) / ".gemini/antigravity-cli/settings.json"
+        settings_path = Path.home() / ".gemini/antigravity-cli/settings.json"
         try:
             data = safe_load_json(settings_path, {}, logger=logger)
 

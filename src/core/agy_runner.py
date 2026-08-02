@@ -3,70 +3,70 @@ import functools
 import os
 import re
 import signal
+import sys
 
 from config import logger
 
 active_processes = {}
 agy_start_lock = asyncio.Lock()
-# Threads killed intentionally - agy's SIGTERM exit code isn't reliable enough to tell otherwise.
 _intentionally_stopped = set()
 
-# Forced stdout buffer size (see _find_libstdbuf) - big enough for one write, small enough not to delay polling.
 _STDOUT_BUFFER_SIZE = 65536
 
 
 @functools.lru_cache(maxsize=1)
-def _find_libstdbuf() -> str | None:
-    """Find libstdbuf.so, the shared library `stdbuf` LD_PRELOADs. Linux-only
-    (no macOS/Windows equivalent implemented) - returns None there too.
+def _find_preload_lib() -> tuple[str, str] | None:
+    if sys.platform == "darwin":
+        env_var = "DYLD_INSERT_LIBRARIES"
+        lib_name = "libstdbuf.dylib"
+        candidates = [
+            "/opt/homebrew/opt/coreutils/lib/libstdbuf.dylib",
+            "/usr/local/opt/coreutils/lib/libstdbuf.dylib",
+        ]
+        search_root = "/opt/homebrew" if os.path.isdir("/opt/homebrew") else "/usr/local"
+    elif os.name == "nt":
+        return None
+    else:
+        env_var = "LD_PRELOAD"
+        lib_name = "libstdbuf.so"
+        candidates = [
+            "/usr/lib/x86_64-linux-gnu/coreutils/libstdbuf.so",
+            "/usr/lib/aarch64-linux-gnu/coreutils/libstdbuf.so",
+            "/usr/libexec/coreutils/libstdbuf.so",
+            "/usr/lib/coreutils/libstdbuf.so",
+            "/usr/lib/libstdbuf.so",
+        ]
+        search_root = "/usr"
 
-    agy runs commands under a PTY, so glibc line-buffers instead of
-    fully-buffering stdout - agy's completion-detection misreads the gap
-    between line writes as "done," truncating multi-line output to its
-    first line despite exit code 0. LD_PRELOADing this forces full
-    buffering instead. Returns None (no fix applied) if not found.
-    """
-    candidates = [
-        "/usr/lib/x86_64-linux-gnu/coreutils/libstdbuf.so",  # Debian/Ubuntu
-        "/usr/lib/aarch64-linux-gnu/coreutils/libstdbuf.so",
-        "/usr/libexec/coreutils/libstdbuf.so",  # Fedora/RHEL
-        "/usr/lib/coreutils/libstdbuf.so",  # Arch
-        "/usr/lib/libstdbuf.so",
-    ]
     for path in candidates:
         if os.path.isfile(path):
-            return path
+            return env_var, path
 
-    # lru_cache: only runs once per process.
     try:
         import subprocess
 
         result = subprocess.run(
-            ["find", "/usr", "-name", "libstdbuf.so"],
+            ["find", search_root, "-name", lib_name],
             capture_output=True,
             text=True,
             timeout=5,
         )
         found = [line for line in result.stdout.strip().splitlines() if line]
         if found:
-            return found[0]
+            return env_var, found[0]
     except Exception:
         pass
 
+    install_hint = "brew install coreutils" if sys.platform == "darwin" else "install coreutils"
     logger.warning(
-        "[AGY ENV] libstdbuf.so not found - run_command output for "
-        "multi-line commands may come back truncated. Add its path to "
-        "_find_libstdbuf()'s candidates list if coreutils is installed "
-        "somewhere nonstandard."
+        f"[AGY ENV] {lib_name} not found - run_command output for multi-line "
+        f"commands may come back truncated. Try `{install_hint}`, or add its path "
+        "to _find_preload_lib()'s candidates list if installed somewhere nonstandard."
     )
     return None
 
 
 def stop_active_process(thread_id: str) -> bool:
-    """Kill the agy subprocess for this thread, if any. Also used when a
-    new voice utterance interrupts a still-in-flight turn. Returns
-    whether a process was actually found and signaled.
-    """
     target_proc = active_processes.get(thread_id)
     if not target_proc:
         return False
@@ -100,6 +100,24 @@ async def _get_latest_conversation_id() -> str:
         return ""
 
 
+def _snapshot_conversation_dirs() -> set[str]:
+    from pathlib import Path
+
+    history_dir = Path.home() / ".gemini/antigravity-cli/brain"
+    if not history_dir.exists():
+        return set()
+    return {d.name for d in history_dir.iterdir() if d.is_dir()}
+
+
+async def _poll_new_conversation_id(before: set[str], attempts: int = 30, interval: float = 0.1) -> str:
+    for _ in range(attempts):
+        await asyncio.sleep(interval)
+        new_dirs = _snapshot_conversation_dirs() - before
+        if new_dirs:
+            return next(iter(new_dirs))
+    return ""
+
+
 async def run_agy(
     *args, timeout: int = 300, stream_queue: asyncio.Queue = None, thread_id: str = None, cwd: str = None
 ) -> str:
@@ -123,10 +141,11 @@ async def run_agy(
                 if thread_id:
                     env["LGY_THREAD_ID"] = thread_id
 
-                libstdbuf_path = _find_libstdbuf()  # works around agy's output-truncation bug
-                if libstdbuf_path:
-                    existing_preload = env.get("LD_PRELOAD", "")
-                    env["LD_PRELOAD"] = f"{libstdbuf_path}:{existing_preload}" if existing_preload else libstdbuf_path
+                preload = _find_preload_lib()  # works around agy's output-truncation bug
+                if preload:
+                    env_var, lib_path = preload
+                    existing_preload = env.get(env_var, "")
+                    env[env_var] = f"{lib_path}:{existing_preload}" if existing_preload else lib_path
                     env["_STDBUF_O"] = str(_STDOUT_BUFFER_SIZE)
 
                 kwargs = {
@@ -149,15 +168,15 @@ async def run_agy(
                 cmd = [AGY_BIN] + args_list
 
                 async with agy_start_lock:
+                    before_dirs = _snapshot_conversation_dirs()
                     proc = await asyncio.create_subprocess_exec(*cmd, **kwargs)
                     if thread_id:
                         active_processes[thread_id] = proc
 
                     if stream_queue and "--conversation" not in args:
-                        await asyncio.sleep(1.0)
-                        latest_conv_id = await _get_latest_conversation_id()
-                        if latest_conv_id:
-                            await stream_queue.put(("__CONV_ID__:" + latest_conv_id, False))
+                        new_conv_id = await _poll_new_conversation_id(before_dirs)
+                        if new_conv_id:
+                            await stream_queue.put(("__CONV_ID__:" + new_conv_id, False))
 
                 stdout_chunks = []
                 stderr_chunks = []
@@ -267,7 +286,6 @@ async def run_agy(
                         await stream_queue.put(("\n\n" + error_msg, True))
                     return error_msg
 
-                # DEBUG-only (LOG_LEVEL) raw stdout capture.
                 logger.debug(f"[AGY RAW STDOUT] {text!r}")
                 return text or "(Empty response)"
 
@@ -379,11 +397,6 @@ async def generate_thread_title(user_input: str, response: str) -> str:
 
 
 async def update_agy_conversation_title(conv_id: str, title: str) -> None:
-    """Antigravity CLI's own conversation list reads its display name from
-    conversation_summaries.db's `preview` column (the `title` column exists
-    but is unused/always empty - confirmed by inspecting the db directly).
-    Without this, agy shows its own auto-generated name while the Discord
-    thread shows ours, and the two drift apart for the same conversation."""
     if not conv_id:
         return
 

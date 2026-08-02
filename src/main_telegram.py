@@ -2,7 +2,6 @@
 which starts both concurrently when both platforms are enabled."""
 
 import asyncio
-import os
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -144,7 +143,7 @@ async def cmd_credit(update: Update, context) -> None:
         await update.message.reply_text("❌ Denied")
         return
 
-    settings_path = Path(os.getenv("HOME", "/root")) / ".gemini/antigravity-cli/settings.json"
+    settings_path = Path.home() / ".gemini/antigravity-cli/settings.json"
     current = bool(safe_load_json(settings_path, {}, logger=logger).get("useG1Credits", False))
 
     async def set_credit(use_credits: bool, query) -> None:
@@ -182,6 +181,10 @@ async def cmd_credit(update: Update, context) -> None:
 
 
 async def on_message(update: Update, context) -> None:
+    chat_id = update.effective_chat.id
+    user = update.effective_user
+    if user and allowed(user.id, "telegram") and not session_manager.get_session(str(chat_id)):
+        _start_session(chat_id, user.id)
     await handle_message(None, update, context.bot_data["adapter"])
 
 
