@@ -3,6 +3,7 @@
 const { spawn, spawnSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const {
     PLATFORMS,
     getSettings,
@@ -236,10 +237,67 @@ function renderTable(headers, rows) {
     return lines.join('\n');
 }
 
+// Mirrors src/config.py's AGY_BIN resolution (AGY_BIN_PATH env var, else ~/.local/bin/agy), plus a PATH fallback for installs that don't use the default location.
+function findAgyBin() {
+    const envPath = process.env.AGY_BIN_PATH;
+    if (envPath && fs.existsSync(envPath)) return envPath;
+
+    const defaultPath = path.join(os.homedir(), '.local', 'bin', 'agy');
+    if (fs.existsSync(defaultPath)) return defaultPath;
+
+    const which = spawnSync(isWin ? 'where' : 'which', ['agy'], { stdio: 'pipe' });
+    if (which.status === 0) {
+        const out = which.stdout.toString().trim().split('\n')[0].trim();
+        if (out) return out;
+    }
+    return null;
+}
+
+function getPm2Proc() {
+    const jlist = spawnSync('npx', ['-y', 'pm2', 'jlist'], { stdio: 'pipe' });
+    if (jlist.status !== 0) return null;
+    try {
+        const procs = JSON.parse(jlist.stdout.toString());
+        return procs.find((p) => p.name === LGY_PM2_NAME) || null;
+    } catch (e) {
+        return null;
+    }
+}
+
 if (cmd === 'version' || cmd === '-v' || cmd === '--version') {
     const pkg = require('../package.json');
     console.log(`linkgravity v${pkg.version}`);
 } else if (cmd === 'start') {
+    const existing = getPm2Proc();
+    if (existing && existing.pm2_env.status === 'online') {
+        console.log(
+            `\n${color.yellow}⚠${color.reset} LinkGravity is already running. ` +
+                `Use ${color.cyan}lgy restart${color.reset} to apply changes, or ${color.cyan}lgy stop${color.reset} first.\n`,
+        );
+        process.exit(1);
+    }
+
+    const settings = getSettings();
+    const anyConfigured = Object.keys(PLATFORMS).some(
+        (key) => platformState(key, settings).configured,
+    );
+    if (!anyConfigured) {
+        console.log(
+            `\n${color.yellow}⚠${color.reset} No messenger is configured yet - ` +
+                `set up at least one of Discord, Telegram, or Slack first: ${color.cyan}lgy setup${color.reset}\n`,
+        );
+        process.exit(1);
+    }
+
+    if (!findAgyBin()) {
+        console.log(
+            `\n${color.yellow}⚠${color.reset} Couldn't find the agy CLI ` +
+                `(checked $AGY_BIN_PATH, ~/.local/bin/agy, and PATH). Install/configure agy first, ` +
+                `or set the AGY_BIN_PATH environment variable to its location.\n`,
+        );
+        process.exit(1);
+    }
+
     info('Starting LinkGravity daemon...');
     runPm2(['start', LGY_SCRIPT_PATH, '--interpreter', pythonExe, '--name', LGY_PM2_NAME]);
     verifyStartup().then((ok) => process.exit(ok ? 0 : 1));
@@ -294,15 +352,7 @@ if (cmd === 'version' || cmd === '-v' || cmd === '--version') {
     const sessions = getSessions();
     const health = getPlatformHealth();
 
-    let pm2Procs = [];
-    const jlist = spawnSync('npx', ['-y', 'pm2', 'jlist'], { stdio: 'pipe' });
-    if (jlist.status === 0) {
-        try {
-            pm2Procs = JSON.parse(jlist.stdout.toString());
-        } catch (e) {}
-    }
-
-    const proc = pm2Procs.find((p) => p.name === LGY_PM2_NAME);
+    const proc = getPm2Proc();
     if (!proc) {
         console.log(`\n${color.cyan}▶${color.reset} daemon: not running\n`);
     } else {

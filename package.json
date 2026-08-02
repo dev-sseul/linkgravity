@@ -40,7 +40,7 @@
     "npm-scripts",
     "hooks",
     "src",
-    "voice-service/index.js",
+    "voice-service/*.js",
     "voice-service/package.json",
     "voice-service/package-lock.json",
     "requirements.txt",
