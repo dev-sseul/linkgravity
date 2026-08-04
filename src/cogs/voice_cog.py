@@ -92,7 +92,7 @@ class VoiceCog(commands.Cog):
                 opts.append(app_commands.Choice(name=str(v), value=v))
         return opts
 
-    async def threshold_autocomplete(
+    async def interrupt_threshold_autocomplete(
         self, interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[int]]:
         current_val = int(self.bot_settings.get("voice_threshold", 3000))
@@ -101,6 +101,19 @@ class VoiceCog(commands.Cog):
             opts.append(app_commands.Choice(name=f"{current_val} (current)", value=current_val))
 
         for v in [1000, 2000, 3000, 5000]:
+            if v != current_val and len(opts) < 25:
+                opts.append(app_commands.Choice(name=str(v), value=v))
+        return opts
+
+    async def wake_sensitivity_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[float]]:
+        current_val = float(self.bot_settings.get("wake_threshold", 0.4))
+        opts = []
+        if str(current_val) in current or not current:
+            opts.append(app_commands.Choice(name=f"{current_val} (current)", value=current_val))
+
+        for v in [0.2, 0.3, 0.4, 0.5, 0.6]:
             if v != current_val and len(opts) < 25:
                 opts.append(app_commands.Choice(name=str(v), value=v))
         return opts
@@ -282,12 +295,13 @@ class VoiceCog(commands.Cog):
 
     @app_commands.command(
         name="sound",
-        description="Configure voice settings (Wake word, active time, threshold, TTS voice/speed, TTS on/off)",
+        description="Configure voice settings (Wake word, active time, thresholds, TTS voice/speed, TTS on/off)",
     )
     @app_commands.describe(
         wake_word="The single word/phrase that wakes the bot (recorded in your voice)",
         active_times="Duration in seconds the bot stays awake",
-        threshold="Voice volume sensitivity (1000~10000)",
+        interrupt_threshold="Mic volume that interrupts (barges into) TTS playback (1000~10000)",
+        wake_sensitivity="Wake word match sensitivity (0.1~0.9, lower = easier to trigger but more false wakes)",
         tts_voice="Select the AI TTS voice",
         tts_enabled="Turn Text-to-Speech ON or OFF",
         tts_speed="TTS playback speed multiplier, e.g. 1.3 for 1.3x (0.5~2.0)",
@@ -295,7 +309,8 @@ class VoiceCog(commands.Cog):
     )
     @app_commands.autocomplete(
         active_times=active_times_autocomplete,
-        threshold=threshold_autocomplete,
+        interrupt_threshold=interrupt_threshold_autocomplete,
+        wake_sensitivity=wake_sensitivity_autocomplete,
         tts_voice=tts_voice_autocomplete,
         tts_enabled=tts_enabled_autocomplete,
         tts_speed=tts_speed_autocomplete,
@@ -306,7 +321,8 @@ class VoiceCog(commands.Cog):
         interaction: discord.Interaction,
         wake_word: str = None,
         active_times: int = None,
-        threshold: int = None,
+        interrupt_threshold: int = None,
+        wake_sensitivity: float = None,
         tts_voice: str = None,
         tts_enabled: str = None,
         tts_speed: float = None,
@@ -321,7 +337,8 @@ class VoiceCog(commands.Cog):
         if (
             wake_word is None
             and active_times is None
-            and threshold is None
+            and interrupt_threshold is None
+            and wake_sensitivity is None
             and tts_voice is None
             and tts_enabled is None
             and tts_speed is None
@@ -329,7 +346,8 @@ class VoiceCog(commands.Cog):
         ):
             curr_wake = (self.bot_settings.get("wake_words") or {}).get(str(interaction.user.id), "None")
             curr_timer = self.bot_settings.get("active_timer", 60)
-            curr_thresh = self.bot_settings.get("voice_threshold", 3000)
+            curr_interrupt_thresh = self.bot_settings.get("voice_threshold", 3000)
+            curr_wake_sens = self.bot_settings.get("wake_threshold", 0.4)
             curr_tts = self.bot_settings.get("tts_voice", "en-US-AriaNeural")
             curr_tts_on = "ON" if self.bot_settings.get("tts_enabled", True) else "OFF"
             curr_tts_speed = self.bot_settings.get("tts_speed", 1.0)
@@ -339,7 +357,8 @@ class VoiceCog(commands.Cog):
             embed.add_field(name="🎙️ Wake Word", value=f"`{curr_wake}`", inline=False)
             embed.add_field(name="🔒 Wake Word Required", value=f"`{'ON' if curr_required else 'OFF'}`", inline=False)
             embed.add_field(name="⏱️ Active Time", value=f"`{curr_timer}s`", inline=False)
-            embed.add_field(name="🔊 Threshold", value=f"`{curr_thresh}`", inline=False)
+            embed.add_field(name="🎯 Wake Sensitivity", value=f"`{curr_wake_sens}`", inline=False)
+            embed.add_field(name="🔊 Interrupt Threshold", value=f"`{curr_interrupt_thresh}`", inline=False)
             embed.add_field(name="🗣️ TTS Voice", value=f"`{curr_tts}`", inline=False)
             embed.add_field(name="🔊 TTS Enabled", value=f"`{curr_tts_on}`", inline=False)
             embed.add_field(name="⏩ TTS Speed", value=f"`{curr_tts_speed}x`", inline=False)
@@ -353,12 +372,25 @@ class VoiceCog(commands.Cog):
         if active_times is not None:
             self.bot_settings["active_timer"] = active_times
             updated.append(f"⏱️ Active Timer: `{active_times}s`")
-        if threshold is not None:
-            self.bot_settings["voice_threshold"] = threshold
-            updated.append(f"🔊 Threshold: `{threshold}`")
+        if interrupt_threshold is not None:
+            self.bot_settings["voice_threshold"] = interrupt_threshold
+            updated.append(f"🔊 Interrupt Threshold: `{interrupt_threshold}`")
             try:
                 async with aiohttp.ClientSession(timeout=NODE_REQUEST_TIMEOUT) as session:
-                    await session.post(f"{NODE_VOICE_API}/set_config", json={"voice_threshold": threshold})
+                    await session.post(f"{NODE_VOICE_API}/set_config", json={"voice_threshold": interrupt_threshold})
+            except aiohttp.ClientError as e:
+                self.logger.warning(f"Node.js sync failed for {interaction.guild_id}: {e}")
+                updated.append(f"(⚠️ Node.js Sync Failed: {e})")
+            except asyncio.TimeoutError:
+                self.logger.warning(f"Node.js sync timeout for {interaction.guild_id}")
+                updated.append("(⚠️ Node.js Sync Timeout)")
+        if wake_sensitivity is not None:
+            clamped_wake = max(0.05, min(0.95, wake_sensitivity))
+            self.bot_settings["wake_threshold"] = clamped_wake
+            updated.append(f"🎯 Wake Sensitivity: `{clamped_wake}`")
+            try:
+                async with aiohttp.ClientSession(timeout=NODE_REQUEST_TIMEOUT) as session:
+                    await session.post(f"{NODE_VOICE_API}/set_config", json={"wake_threshold": clamped_wake})
             except aiohttp.ClientError as e:
                 self.logger.warning(f"Node.js sync failed for {interaction.guild_id}: {e}")
                 updated.append(f"(⚠️ Node.js Sync Failed: {e})")

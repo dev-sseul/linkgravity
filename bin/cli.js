@@ -50,6 +50,7 @@ function runPm2(args, silent = true) {
     }
 
     let hasSudoInstructions = false;
+    let sudoCommand = null;
     if (silent && result.stdout && (args[0] === 'startup' || args[0] === 'unstartup')) {
         const out = result.stdout.toString();
         const lines = out.split('\n');
@@ -59,11 +60,8 @@ function runPm2(args, silent = true) {
                 line.trim().startsWith('sudo su -c') ||
                 line.includes('sudo ')
             ) {
-                console.log(
-                    `\n\n${color.yellow}⚠ Action Required:${color.reset} To complete setup, copy and paste this command into your terminal:\n`,
-                );
-                console.log(`    ${color.cyan}${line.trim()}${color.reset}\n`);
                 hasSudoInstructions = true;
+                sudoCommand = line.trim();
             }
         }
     }
@@ -73,6 +71,27 @@ function runPm2(args, silent = true) {
             console.error(result.stderr.toString().trim());
         }
         process.exit(result.status);
+    }
+
+    return { hasSudoInstructions, sudoCommand };
+}
+
+function runSudoStepThen(sudoCommand, successMessage) {
+    // stdin stays inherited so sudo can still prompt for a password on the real terminal;
+    // stdout/stderr are captured so pm2's own noise only surfaces if this actually fails.
+    const result = spawnSync('sh', ['-c', sudoCommand], { stdio: ['inherit', 'pipe', 'pipe'] });
+    if (result.status === 0) {
+        success(`${successMessage}\n`);
+    } else {
+        console.log(`${color.yellow}⚠${color.reset} That didn't complete:\n`);
+        const output = [
+            (result.stdout || '').toString().trim(),
+            (result.stderr || '').toString().trim(),
+        ]
+            .filter(Boolean)
+            .join('\n');
+        if (output) console.log(output);
+        console.log(`\nRun \`lgy enable\` again to retry.\n`);
     }
 }
 
@@ -223,11 +242,18 @@ function formatUptime(pmUptimeMs) {
     return `${days}d ${hours % 24}h`;
 }
 
+function visibleLength(s) {
+    return String(s).replace(ANSI_ESCAPE, '').length;
+}
+
 function renderTable(headers, rows) {
     const widths = headers.map((h, i) =>
-        Math.max(h.length, ...rows.map((r) => String(r[i]).length)),
+        Math.max(h.length, ...rows.map((r) => visibleLength(r[i]))),
     );
-    const pad = (s, w) => ` ${String(s).padEnd(w)} `;
+    const pad = (s, w) => {
+        const str = String(s);
+        return ` ${str}${' '.repeat(Math.max(0, w - visibleLength(str)))} `;
+    };
     const sepLine = (l, m, r) => l + widths.map((w) => '─'.repeat(w + 2)).join(m) + r;
     const rowLine = (cells) => '│' + cells.map((c, i) => pad(c, widths[i])).join('│') + '│';
 
@@ -237,7 +263,7 @@ function renderTable(headers, rows) {
     return lines.join('\n');
 }
 
-// Mirrors src/config.py's AGY_BIN resolution (AGY_BIN_PATH env var, else ~/.local/bin/agy), plus a PATH fallback for installs that don't use the default location.
+// Must stay in sync with config.py's AGY_BIN resolution.
 function findAgyBin() {
     const envPath = process.env.AGY_BIN_PATH;
     if (envPath && fs.existsSync(envPath)) return envPath;
@@ -257,28 +283,60 @@ function getPm2Proc() {
     const jlist = spawnSync('npx', ['-y', 'pm2', 'jlist'], { stdio: 'pipe' });
     if (jlist.status !== 0) return null;
 
-    // pm2 sometimes prints a version-mismatch banner ("In-memory PM2 is
-    // out-of-date...") before the JSON when the CLI version differs from
-    // the already-running daemon's - skip past it instead of choking on it.
-    const out = jlist.stdout.toString();
-    const jsonStart = out.indexOf('[');
-    if (jsonStart === -1) {
-        console.error(
-            `${color.yellow}⚠${color.reset} Couldn't read pm2 status (unexpected output, no JSON found). Raw output:\n${out.trim()}`,
-        );
-        return null;
+    // pm2 can print noise before the real JSON (version banners, ANSI escapes, daemon-spawn logs) that
+    // can itself contain '[' - try every '[' left-to-right and keep the first one that parses as JSON.
+    const out = jlist.stdout.toString().replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '');
+    for (let i = 0; i < out.length; i++) {
+        if (out[i] !== '[') continue;
+        try {
+            const procs = JSON.parse(out.slice(i));
+            if (Array.isArray(procs)) return procs.find((p) => p.name === LGY_PM2_NAME) || null;
+        } catch (e) {}
     }
 
+    console.error(
+        `${color.yellow}⚠${color.reset} Couldn't read pm2 status (no valid JSON found in its output). Raw output:\n${out.trim()}`,
+    );
+    return null;
+}
+
+// Best-effort: pm2 has no API for "is this registered to start on boot", so this checks the OS directly and returns null (unknown) if that check itself isn't available.
+function isAutostartEnabled() {
+    if (isWin) return null;
     try {
-        const procs = JSON.parse(out.slice(jsonStart));
-        return procs.find((p) => p.name === LGY_PM2_NAME) || null;
+        const user = os.userInfo().username;
+        if (process.platform === 'linux') {
+            const check = spawnSync('systemctl', ['is-enabled', `pm2-${user}`], { stdio: 'pipe' });
+            if (check.error) return null;
+            const out = check.stdout.toString().trim();
+            if (out === 'enabled') return true;
+            if (out === 'disabled' || check.status !== 0) return false;
+            return null;
+        }
+        if (process.platform === 'darwin') {
+            const plistPath = path.join(
+                os.homedir(),
+                'Library',
+                'LaunchAgents',
+                `pm2.${user}.plist`,
+            );
+            return fs.existsSync(plistPath);
+        }
     } catch (e) {
-        console.error(
-            `${color.yellow}⚠${color.reset} Couldn't parse pm2 status output: ${e.message}. ` +
-                `If you saw a version-mismatch warning above, try ${color.cyan}npx pm2 update${color.reset}.`,
-        );
         return null;
     }
+    return null;
+}
+
+function checkLatestVersionFast(currentVersion) {
+    const view = spawnSync('npm', ['view', 'linkgravity', 'version'], {
+        stdio: 'pipe',
+        timeout: 3000,
+    });
+    if (view.error || view.status !== 0) return null;
+    const latest = view.stdout.toString().trim();
+    if (!latest) return null;
+    return { latest, upToDate: latest === currentVersion };
 }
 
 if (cmd === 'version' || cmd === '-v' || cmd === '--version') {
@@ -407,6 +465,8 @@ if (cmd === 'version' || cmd === '-v' || cmd === '--version') {
         }
     }
 
+    const daemonAlive = !!proc && proc.pm2_env.status === 'online';
+
     const rows = Object.entries(PLATFORMS).map(([key, def]) => {
         const { enabled } = platformState(key, settings);
         const sessionCount = Object.values(sessions).filter((s) => s.platform === key).length;
@@ -414,16 +474,53 @@ if (cmd === 'version' || cmd === '-v' || cmd === '--version') {
         let connection = '-';
         let since = '-';
         if (enabled) {
-            if (!h) connection = 'unknown';
-            else if (h.status === 'running') connection = 'connected';
-            else if (h.status === 'connecting') connection = 'connecting...';
-            else if (h.status === 'error') connection = `error: ${h.detail || '?'}`;
-            else if (h.status === 'stopped') connection = 'stopped';
-            if (h && h.at) since = formatUptime(new Date(h.at).getTime());
+            if (!daemonAlive) {
+                // health.json freezes at its last value if the process was killed outright (kill -9, OOM, reboot) instead of exiting cleanly, so don't trust it once pm2 confirms the daemon isn't actually running.
+                connection = `${color.red}down${color.reset}`;
+                since = h && h.at ? `last seen ${formatUptime(new Date(h.at).getTime())} ago` : '-';
+            } else if (!h) {
+                connection = 'unknown';
+            } else {
+                if (h.status === 'running') connection = `${color.green}connected${color.reset}`;
+                else if (h.status === 'connecting') connection = 'connecting...';
+                else if (h.status === 'error')
+                    connection = `${color.red}error: ${h.detail || '?'}${color.reset}`;
+                else if (h.status === 'stopped') connection = 'stopped';
+                if (h.at) since = formatUptime(new Date(h.at).getTime());
+            }
         }
         return [def.label, enabled ? 'yes' : 'no', connection, since, String(sessionCount)];
     });
     console.log(renderTable(['platform', 'enabled', 'connection', 'since', 'sessions'], rows));
+    console.log();
+
+    const pkg = require('../package.json');
+    const versionCheck = checkLatestVersionFast(pkg.version);
+    const versionLine =
+        versionCheck === null
+            ? pkg.version
+            : versionCheck.upToDate
+              ? `${pkg.version} (up to date)`
+              : `${pkg.version} ${color.yellow}(v${versionCheck.latest} available - run \`lgy update\`)${color.reset}`;
+
+    const agyPath = findAgyBin();
+    const agyLine = agyPath ? `found (${agyPath})` : `${color.yellow}not found${color.reset}`;
+
+    const autostart = isAutostartEnabled();
+    const autostartLine =
+        autostart === null
+            ? 'unknown'
+            : autostart
+              ? `${color.green}enabled${color.reset}`
+              : 'disabled';
+
+    for (const [label, value] of [
+        ['version', versionLine],
+        ['agy', agyLine],
+        ['autostart', autostartLine],
+    ]) {
+        console.log(`${label.padEnd(10)} ${value}`);
+    }
     console.log();
 } else if (cmd === 'enable') {
     if (isWin) {
@@ -434,9 +531,13 @@ if (cmd === 'version' || cmd === '-v' || cmd === '--version') {
         process.exit(1);
     }
     info('Registering LinkGravity to start on system boot...');
-    runPm2(['startup']);
+    const { hasSudoInstructions, sudoCommand } = runPm2(['startup']);
     runPm2(['save']);
-    success('Auto-start configuration saved.\n');
+    if (hasSudoInstructions && sudoCommand) {
+        runSudoStepThen(sudoCommand, 'Auto-start configuration saved.');
+    } else {
+        success('Auto-start configuration saved.\n');
+    }
 } else if (cmd === 'disable') {
     if (isWin) {
         console.log(
@@ -446,9 +547,13 @@ if (cmd === 'version' || cmd === '-v' || cmd === '--version') {
         process.exit(1);
     }
     info('Removing LinkGravity from system boot...');
-    runPm2(['unstartup']);
+    const { hasSudoInstructions, sudoCommand } = runPm2(['unstartup']);
     runPm2(['save']);
-    success('Auto-start configuration removed.\n');
+    if (hasSudoInstructions && sudoCommand) {
+        runSudoStepThen(sudoCommand, 'Auto-start configuration removed.');
+    } else {
+        success('Auto-start configuration removed.\n');
+    }
 } else if (cmd === 'setup' || cmd === 'init') {
     const runSetup = require('./setup');
     runSetup().catch((err) => {
