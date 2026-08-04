@@ -446,6 +446,20 @@ async function runSetup() {
     console.log();
     p.intro(`${color.cyan}▶ LinkGravity Setup Wizard${color.reset}`);
 
+    const registerHook = require('../npm-scripts/register-hook');
+    if (!registerHook.isHookRegistered()) {
+        const consent = await p.confirm({
+            message:
+                "Register LinkGravity's approval hook with agy? (required for tool-call approval - lets LinkGravity gate agy's actions through Discord/Telegram/Slack)",
+            initialValue: true,
+        });
+        if (p.isCancel(consent)) {
+            p.cancel('Setup cancelled.');
+            process.exit(0);
+        }
+        if (consent) registerHook({ allowFirstTimeCreate: true });
+    }
+
     while (true) {
         const settings = getSettings();
         const options = Object.entries(PLATFORMS).map(([key, def]) => {

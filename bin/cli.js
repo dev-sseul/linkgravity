@@ -200,6 +200,10 @@ function verifyStartup() {
             finish(false);
         }, 30000);
 
+        const isBenignShutdownNoise = (str) =>
+            str.includes('asyncio.exceptions.CancelledError') &&
+            str.includes('Application.stop() complete');
+
         const checkLog = (data) => {
             if (settled) return;
             const str = data.toString();
@@ -210,7 +214,8 @@ function verifyStartup() {
                 errorDetectionArmed &&
                 (str.includes('Traceback (most recent call last):') ||
                     str.includes('Error:') ||
-                    str.includes('Exception:'))
+                    str.includes('Exception:')) &&
+                !isBenignShutdownNoise(str)
             ) {
                 console.log(`\n\n${color.yellow}❌ Error detected during startup:${color.reset}`);
                 const errorLines = str

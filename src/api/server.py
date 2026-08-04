@@ -41,6 +41,6 @@ async def setup_webhook_server(bot):
 
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", 18080)
+    site = web.TCPSite(runner, "127.0.0.1", 18080)
     await site.start()
     logger.info("Webhook / STT Server started on port 18080")

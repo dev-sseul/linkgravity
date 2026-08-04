@@ -1,11 +1,5 @@
 'use strict';
-// Registers/fixes this project's agy hooks in ~/.gemini/config/hooks.json
-// (schema: https://antigravity.google/docs/hooks). Runs on every `npm
-// install` so paths stay correct if this checkout moves, identifying its
-// own entries by `name` (not command string) so a stale path gets fixed
-// in place rather than duplicated, leaving any other configured hooks
-// untouched. Only ever overwrites `command` - never `type`/`timeout`,
-// which the user may have customized - logging old/new values on change.
+// Only ever overwrites `command` on an existing entry - never `type`/`timeout`, which the user may have customized.
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -13,11 +7,9 @@ const { repoRoot, python: venvPython } = require('./venv-paths');
 
 const hooksJsonPath = path.join(os.homedir(), '.gemini', 'config', 'hooks.json');
 
-// PreToolUse: tool-approval gate, matcher-wrapped per schema.
-// Stop: fires when agy is about to end a turn; if fullyIdle is false
-// (an async run_command is still in flight), stop_hook.py tells agy to
-// keep going instead of ending the turn with that result lost. Flat
-// array per schema (no matcher - nothing to match tool names against).
+// PreToolUse/Stop meanings are agy's own hook contract: Stop fires when agy is about to
+// end a turn, and if fullyIdle is false (an async run_command still in flight), stop_hook.py
+// tells agy to keep going instead of losing that result.
 const HOOK_REGISTRATIONS = [
     {
         eventType: 'PreToolUse',
@@ -35,9 +27,6 @@ const HOOK_REGISTRATIONS = [
     },
 ];
 
-// Hooks retired from HOOK_REGISTRATIONS but listed here so an existing
-// install actually gets the stale entry removed from hooks.json, instead
-// of a zombie entry pointing at a script that no longer exists.
 const RETIRED_HOOKS = [{ eventType: 'PreInvocation', name: 'wait-ms-before-async-reminder' }];
 
 function loadHooksConfig() {
@@ -47,9 +36,6 @@ function loadHooksConfig() {
     try {
         return JSON.parse(fs.readFileSync(hooksJsonPath, 'utf8'));
     } catch (err) {
-        // Back up rather than silently clobbering whatever was there -
-        // it may have other hooks configured that have nothing to do
-        // with this project.
         const backupPath = `${hooksJsonPath}.corrupted-${Date.now()}`;
         fs.copyFileSync(hooksJsonPath, backupPath);
         console.warn(
@@ -76,7 +62,6 @@ function findHookEntry(config, eventType, name, wrapInMatcher) {
         }
         return hookEntry;
     }
-    // Flat array (Stop/PreInvocation/PostInvocation) - no matcher wrapper.
     let hookEntry = config.hooks[eventType].find((h) => h.name === name);
     if (!hookEntry) {
         hookEntry = { name };
@@ -94,8 +79,6 @@ function removeRetiredHooks(config) {
         const nextArr = [];
         for (const entry of arr) {
             if (Array.isArray(entry.hooks)) {
-                // Matcher-wrapped shape - drop the matcher block too if
-                // nothing's left in it.
                 const beforeLen = entry.hooks.length;
                 entry.hooks = entry.hooks.filter((h) => h.name !== retired.name);
                 if (entry.hooks.length !== beforeLen) {
@@ -106,7 +89,6 @@ function removeRetiredHooks(config) {
                 }
                 if (entry.hooks.length > 0) nextArr.push(entry);
             } else {
-                // Flat shape.
                 if (entry.name === retired.name) {
                     removedAny = true;
                     console.log(
@@ -122,9 +104,24 @@ function removeRetiredHooks(config) {
     return removedAny;
 }
 
-function registerHook() {
+function registerHook({ allowFirstTimeCreate = true } = {}) {
     const config = loadHooksConfig();
     config.hooks = config.hooks || {};
+
+    const isFirstTime = HOOK_REGISTRATIONS.some((reg) => {
+        const arr = config.hooks[reg.eventType] || [];
+        return reg.wrapInMatcher
+            ? !arr.some((m) => (m.hooks || []).some((h) => h.name === reg.name))
+            : !arr.some((h) => h.name === reg.name);
+    });
+
+    if (isFirstTime && !allowFirstTimeCreate) {
+        console.log(
+            "ℹ️  LinkGravity's Discord/Telegram/Slack approval hook isn't registered with agy yet - run `lgy setup` to enable it.",
+        );
+        return;
+    }
+
     let wroteChange = false;
     let backedUp = false;
 
@@ -175,7 +172,19 @@ function registerHook() {
     }
 }
 
+function isHookRegistered() {
+    const config = loadHooksConfig();
+    config.hooks = config.hooks || {};
+    return HOOK_REGISTRATIONS.every((reg) => {
+        const arr = config.hooks[reg.eventType] || [];
+        return reg.wrapInMatcher
+            ? arr.some((m) => (m.hooks || []).some((h) => h.name === reg.name))
+            : arr.some((h) => h.name === reg.name);
+    });
+}
+
 module.exports = registerHook;
+module.exports.isHookRegistered = isHookRegistered;
 
 if (require.main === module) {
     registerHook();
