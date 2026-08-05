@@ -5,6 +5,7 @@ const { googleSTT } = require('./stt');
 const { getDetectorForUser, feedPCMToDetector, WAKE_MATCH_THRESHOLD } = require('./wakeword');
 const { interruptTTS } = require('./tts');
 const state = require('./state');
+const { aglConfig } = require('./config');
 const { activeStreams, enrollingUsers, isPlaying, wakeWordOptedOut, runtime, isGuildActive } =
     state;
 
@@ -108,7 +109,10 @@ function setupReceiver(connection, guildId, client) {
             partialSent = true;
             fetch('http://127.0.0.1:18080/stt_partial', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-LGY-Token': aglConfig.approve_token,
+                },
                 body: JSON.stringify({ guild_id: guildId, text }),
             }).catch((err) =>
                 console.error(`[STT] Failed to send partial text to Python:`, err.message),
@@ -248,7 +252,10 @@ function setupReceiver(connection, guildId, client) {
                         `http://127.0.0.1:18080/enroll_sample?user_id=${encodeURIComponent(userId)}`,
                         {
                             method: 'POST',
-                            headers: { 'Content-Type': 'application/octet-stream' },
+                            headers: {
+                                'Content-Type': 'application/octet-stream',
+                                'X-LGY-Token': aglConfig.approve_token,
+                            },
                             body: wavBuffer,
                         },
                     );
@@ -263,7 +270,10 @@ function setupReceiver(connection, guildId, client) {
                 if (partialSent) {
                     fetch('http://127.0.0.1:18080/stt_partial_cancel', {
                         method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'X-LGY-Token': aglConfig.approve_token,
+                        },
                         body: JSON.stringify({ guild_id: guildId }),
                     }).catch(() => {});
                 }
@@ -277,7 +287,10 @@ function setupReceiver(connection, guildId, client) {
                 if (partialSent) {
                     fetch('http://127.0.0.1:18080/stt_partial_cancel', {
                         method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'X-LGY-Token': aglConfig.approve_token,
+                        },
                         body: JSON.stringify({ guild_id: guildId }),
                     }).catch(() => {});
                 }
@@ -291,7 +304,10 @@ function setupReceiver(connection, guildId, client) {
             try {
                 await fetch('http://127.0.0.1:18080/stt_input', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-LGY-Token': aglConfig.approve_token,
+                    },
                     body: JSON.stringify({
                         user_id: userId,
                         guild_id: guildId,

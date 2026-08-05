@@ -4,6 +4,17 @@ import os
 import sys
 import urllib.error
 import urllib.request
+from pathlib import Path
+
+LGY_CONFIG_FILE = Path.home() / ".gemini" / "linkgravity" / "lgy.json"
+
+
+def _load_approve_token():
+    try:
+        with open(LGY_CONFIG_FILE, encoding="utf-8") as f:
+            return json.load(f).get("approve_token", "")
+    except Exception:
+        return ""
 
 
 def main():
@@ -34,7 +45,9 @@ def main():
     ).encode("utf-8")
 
     req = urllib.request.Request(
-        "http://localhost:18080/approve", data=payload, headers={"Content-Type": "application/json"}
+        "http://localhost:18080/approve",
+        data=payload,
+        headers={"Content-Type": "application/json", "X-LGY-Token": _load_approve_token()},
     )
 
     try:

@@ -15,6 +15,7 @@ const {
 } = require('./platforms');
 
 const { python: pythonExe, isWin } = require('../npm-scripts/venv-paths');
+const { isEnvironmentReady } = require('../npm-scripts/ensure-env');
 
 const cmd = process.argv[2];
 
@@ -374,6 +375,14 @@ if (cmd === 'version' || cmd === '-v' || cmd === '--version') {
             `\n${color.yellow}⚠${color.reset} Couldn't find the agy CLI ` +
                 `(checked $AGY_BIN_PATH, ~/.local/bin/agy, and PATH). Install/configure agy first, ` +
                 `or set the AGY_BIN_PATH environment variable to its location.\n`,
+        );
+        process.exit(1);
+    }
+
+    if (!isEnvironmentReady()) {
+        console.log(
+            `\n${color.yellow}⚠${color.reset} Python environment isn't set up yet - ` +
+                `run ${color.cyan}lgy setup${color.reset} first (it installs everything on its first run).\n`,
         );
         process.exit(1);
     }

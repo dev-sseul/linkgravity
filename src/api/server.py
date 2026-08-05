@@ -1,6 +1,15 @@
 from aiohttp import web
 
-from config import logger, session_manager
+from config import bot_settings, logger, session_manager
+
+LGY_TOKEN_HEADER = "X-LGY-Token"
+
+
+@web.middleware
+async def auth_middleware(request, handler):
+    if request.headers.get(LGY_TOKEN_HEADER) != bot_settings.get("approve_token"):
+        return web.json_response({"error": "unauthorized"}, status=403)
+    return await handler(request)
 
 
 def is_tool_allowed(tool_name, tool_input):
@@ -20,7 +29,7 @@ def is_tool_allowed(tool_name, tool_input):
 
 
 async def setup_webhook_server(bot):
-    app = web.Application(client_max_size=50 * 1024 * 1024)
+    app = web.Application(client_max_size=50 * 1024 * 1024, middlewares=[auth_middleware])
     app["bot"] = bot
 
     from api.ui_routes import handle_approve_request

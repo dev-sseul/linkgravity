@@ -1,6 +1,7 @@
 const { Readable } = require('stream');
 const { createAudioPlayer, createAudioResource, AudioPlayerStatus } = require('@discordjs/voice');
 const { players, audioQueues, isPlaying, connections, suppressNotifyMap } = require('./state');
+const { aglConfig } = require('./config');
 
 function interruptTTS(guildId) {
     const player = players.get(guildId);
@@ -25,7 +26,7 @@ async function notifyTtsFinished(guild_id) {
     try {
         await fetch('http://127.0.0.1:18080/tts_finished', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', 'X-LGY-Token': aglConfig.approve_token },
             body: JSON.stringify({ guild_id }),
         });
     } catch (err) {

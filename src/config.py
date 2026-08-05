@@ -1,4 +1,5 @@
 import os
+import secrets
 from pathlib import Path
 
 from core.atomic_io import atomic_write_json, safe_load_json
@@ -30,6 +31,7 @@ DEFAULT_LGY_CONFIG = {
     "tts_enabled": True,
     # Sticky default for /new sessions, set whenever /model succeeds.
     "default_model": "",
+    "approve_token": "",
 }
 
 
@@ -70,6 +72,10 @@ def save_bot_settings(data):
 
 
 bot_settings = load_bot_settings()
+
+if not bot_settings.get("approve_token"):
+    bot_settings["approve_token"] = secrets.token_hex(24)
+    save_bot_settings(bot_settings)
 
 from core.logger import init_logger
 from core.session_manager import SessionManager

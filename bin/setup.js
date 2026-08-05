@@ -446,6 +446,13 @@ async function runSetup() {
     console.log();
     p.intro(`${color.cyan}▶ LinkGravity Setup Wizard${color.reset}`);
 
+    const { ensureEnvironment, isEnvironmentReady } = require('../npm-scripts/ensure-env');
+    if (!isEnvironmentReady()) {
+        console.log();
+        ensureEnvironment();
+        console.log();
+    }
+
     const registerHook = require('../npm-scripts/register-hook');
     if (!registerHook.isHookRegistered()) {
         const consent = await p.confirm({
