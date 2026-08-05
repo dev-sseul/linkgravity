@@ -593,6 +593,9 @@ if (cmd === 'version' || cmd === '-v' || cmd === '--version') {
         process.exit(0);
     }
 
+    const procBeforeUpdate = getPm2Proc();
+    const wasOnline = !!procBeforeUpdate && procBeforeUpdate.pm2_env.status === 'online';
+
     info(`Updating: v${currentVersion} -> v${latestVersion}...`);
     const installResult = spawnSync('npm', ['install', '-g', 'linkgravity@latest'], {
         stdio: 'inherit',
@@ -603,27 +606,18 @@ if (cmd === 'version' || cmd === '-v' || cmd === '--version') {
     }
     success(`Installed v${latestVersion}.`);
 
-    info('Restarting daemon to apply the update...');
-    const restartResult = spawnSync('npx', ['-y', 'pm2', 'restart', LGY_PM2_NAME, '--update-env'], {
-        stdio: 'pipe',
-        cwd: path.join(__dirname, '..'),
-        env: { ...process.env, PYTHONUNBUFFERED: '1' },
-    });
-
-    if (restartResult.status === 0) {
-        runPm2(['reset', LGY_PM2_NAME]);
-        verifyStartup().then((ok) => process.exit(ok ? 0 : 1));
-    } else if ((restartResult.stderr || '').toString().includes('not found')) {
-        // Wasn't running before the update - start fresh instead of a false "restarted".
+    if (!procBeforeUpdate) {
         info("Daemon wasn't running - starting it fresh...");
         runPm2(['start', LGY_SCRIPT_PATH, '--interpreter', pythonExe, '--name', LGY_PM2_NAME]);
         verifyStartup().then((ok) => process.exit(ok ? 0 : 1));
+    } else if (wasOnline) {
+        info('Restarting daemon to apply the update...');
+        runPm2(['restart', LGY_PM2_NAME, '--update-env']);
+        runPm2(['reset', LGY_PM2_NAME]);
+        verifyStartup().then((ok) => process.exit(ok ? 0 : 1));
     } else {
-        console.error((restartResult.stderr || '').toString().trim());
-        console.error(
-            `\n${color.yellow}⚠${color.reset} Update installed, but restarting the daemon failed - run 'lgy restart' manually.`,
-        );
-        process.exit(1);
+        success(`Daemon was stopped - leaving it stopped. Run 'lgy start' when you're ready.\n`);
+        process.exit(0);
     }
 } else if (cmd === 'help') {
     console.log(
@@ -693,7 +687,6 @@ if (cmd === 'version' || cmd === '-v' || cmd === '--version') {
         spawnSync(process.argv[0], [process.argv[1], action], { stdio: 'inherit' });
     })();
 } else {
-    // If no valid command was provided, show help
     console.log(
         `\n❌ Unknown command: ${cmd || 'none'}\n💡 Run 'lgy help' to see available commands.`,
     );
