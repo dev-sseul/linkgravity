@@ -175,7 +175,10 @@ function verifyStartup() {
             `${color.cyan}▶${color.reset} Verifying startup status (waiting for bot to come online)...`,
         );
 
-        let cp = spawn('npx', ['-y', 'pm2', 'logs', LGY_PM2_NAME, '--raw', '--lines', '20'], {
+        // Spawned directly instead of through npx: npx wraps pm2 in "npm exec" + "sh -c", so cp.kill()
+        // reaps only the wrapper and leaves the real pm2 logs process orphaned onto init.
+        const pm2Bin = require.resolve('pm2/bin/pm2');
+        let cp = spawn(process.execPath, [pm2Bin, 'logs', LGY_PM2_NAME, '--raw', '--lines', '0'], {
             cwd: path.join(__dirname, '..'),
         });
 
@@ -187,12 +190,6 @@ function verifyStartup() {
             cp.kill();
             resolve(ok);
         };
-
-        // Give the --lines 20 replay burst a moment to flush before treating error text as a fresh crash, not old log noise.
-        let errorDetectionArmed = false;
-        setTimeout(() => {
-            errorDetectionArmed = true;
-        }, 1500);
 
         let timer = setTimeout(() => {
             console.log(
@@ -212,7 +209,6 @@ function verifyStartup() {
                 console.log(`\n${color.green}✔${color.reset} Bot successfully came online!\n`);
                 finish(true);
             } else if (
-                errorDetectionArmed &&
                 (str.includes('Traceback (most recent call last):') ||
                     str.includes('Error:') ||
                     str.includes('Exception:')) &&

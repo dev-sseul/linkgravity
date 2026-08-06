@@ -1,4 +1,5 @@
 import asyncio
+import math
 import time
 
 import aiohttp
@@ -15,6 +16,14 @@ from .voice.stt_session import SttSessionTracker
 NODE_VOICE_API = "http://localhost:18081"
 # Default aiohttp timeout is 5 minutes - too long for a dead voice service.
 NODE_REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=5)
+
+
+def _autocomplete_query(current) -> str:
+    # discord.py hands a focused NUMBER option back as float('nan') when the input box is empty,
+    # and passes INTEGER options through unconverted - neither is guaranteed to be a str.
+    if isinstance(current, float) and math.isnan(current):
+        return ""
+    return str(current)
 
 
 class VoiceCog(commands.Cog):
@@ -83,8 +92,9 @@ class VoiceCog(commands.Cog):
         self, interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[int]]:
         current_val = int(self.bot_settings.get("active_timer", 60))
+        query = _autocomplete_query(current)
         opts = []
-        if str(current_val) in current or not current:
+        if str(current_val) in query or not query:
             opts.append(app_commands.Choice(name=f"{current_val} (current)", value=current_val))
 
         for v in [30, 60, 120, 300]:
@@ -96,8 +106,9 @@ class VoiceCog(commands.Cog):
         self, interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[int]]:
         current_val = int(self.bot_settings.get("voice_threshold", 3000))
+        query = _autocomplete_query(current)
         opts = []
-        if str(current_val) in current or not current:
+        if str(current_val) in query or not query:
             opts.append(app_commands.Choice(name=f"{current_val} (current)", value=current_val))
 
         for v in [1000, 2000, 3000, 5000]:
@@ -109,8 +120,9 @@ class VoiceCog(commands.Cog):
         self, interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[float]]:
         current_val = float(self.bot_settings.get("wake_threshold", 0.4))
+        query = _autocomplete_query(current)
         opts = []
-        if str(current_val) in current or not current:
+        if str(current_val) in query or not query:
             opts.append(app_commands.Choice(name=f"{current_val} (current)", value=current_val))
 
         for v in [0.2, 0.3, 0.4, 0.5, 0.6]:
@@ -184,8 +196,9 @@ class VoiceCog(commands.Cog):
         self, interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[float]]:
         current_val = float(self.bot_settings.get("tts_speed", 1.0))
+        query = _autocomplete_query(current)
         opts = []
-        if str(current_val) in current or not current:
+        if str(current_val) in query or not query:
             opts.append(app_commands.Choice(name=f"{current_val}x (current)", value=current_val))
 
         for v in [0.75, 1.0, 1.25, 1.3, 1.5, 1.75, 2.0]:

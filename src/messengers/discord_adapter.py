@@ -149,8 +149,8 @@ class DiscordAdapter(MessengerAdapter):
     async def start_conversation(self, origin_ref: discord.Message, title: str) -> discord.Thread:
         return await origin_ref.create_thread(name=title[:100], auto_archive_duration=1440)
 
-    def can_rename(self, conversation_ref: Any) -> bool:
-        return isinstance(conversation_ref, discord.Thread)
+    def should_auto_title(self, conversation_ref: Any) -> bool:
+        return isinstance(conversation_ref, discord.Thread) and conversation_ref.name.startswith("Session-")
 
     async def rename_conversation(self, conversation_ref: discord.Thread, title: str) -> None:
         if not isinstance(conversation_ref, discord.Thread):
