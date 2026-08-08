@@ -25,8 +25,11 @@ DEFAULT_LGY_CONFIG = {
     "allowed_user_ids": "",
     # user_id (str) -> registered word, one per person (see EnrollmentManager._commit_enrollment).
     "wake_words": {},
+    # user_id (str) -> wake-word match threshold; absent means voice-service's own default.
+    "wake_thresholds": {},
+    # user_id (str) -> interrupt/VAD RMS threshold; absent means voice-service's own default.
+    "voice_thresholds": {},
     "active_timer": 60,
-    "voice_threshold": 3000,
     "tts_voice": "ko-KR-SunHiNeural",
     "tts_enabled": True,
     # Sticky default for /new sessions, set whenever /model succeeds.

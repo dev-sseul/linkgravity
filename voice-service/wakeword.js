@@ -1,7 +1,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { detectorCache } = require('./state');
+const { detectorCache, wakeThresholds } = require('./state');
 
 // Rustpotter wake-word detection runs entirely in-process here, no Python round trip.
 const WAKE_REF_DIR = path.join(os.homedir(), '.gemini', 'linkgravity', 'wake_refs');
@@ -21,7 +21,11 @@ function loadRustpotterModule() {
 }
 
 // Wake-word confirm cutoff - must stay well above ~0.05 (rustpotter's countdown never finalizes if noise/silence clears it too); 0.4 chosen after live use kept narrowly missing genuine hits just under 0.5.
-const WAKE_MATCH_THRESHOLD = 0.4;
+const DEFAULT_WAKE_THRESHOLD = 0.4;
+
+function wakeThresholdFor(userId) {
+    return wakeThresholds.get(userId) ?? DEFAULT_WAKE_THRESHOLD;
+}
 
 async function getDetectorForUser(userId) {
     if (detectorCache.has(userId)) return detectorCache.get(userId);
@@ -37,7 +41,7 @@ async function getDetectorForUser(userId) {
     config.setSampleRate(48000);
     config.setSampleFormat(mod.SampleFormat.i16);
     config.setChannels(1);
-    config.setThreshold(WAKE_MATCH_THRESHOLD);
+    config.setThreshold(wakeThresholdFor(userId));
     config.setAveragedThreshold(0);
     // Live logs showed genuine attempts peaking above threshold but not sustaining 4 positive-scoring
     // frames; lowered from 4. STT-side prefix-similarity check is the backstop against false wakes.
@@ -107,7 +111,8 @@ function feedPCMToDetector(entry, chunk) {
 
 module.exports = {
     WAKE_REF_DIR,
-    WAKE_MATCH_THRESHOLD,
+    DEFAULT_WAKE_THRESHOLD,
+    wakeThresholdFor,
     loadRustpotterModule,
     getDetectorForUser,
     feedPCMToDetector,

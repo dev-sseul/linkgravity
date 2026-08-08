@@ -16,6 +16,10 @@ from .voice.stt_session import SttSessionTracker
 NODE_VOICE_API = "http://localhost:18081"
 # Default aiohttp timeout is 5 minutes - too long for a dead voice service.
 NODE_REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=5)
+# Must match DEFAULT_WAKE_THRESHOLD / DEFAULT_VAD_THRESHOLD in voice-service - the two processes
+# decide these independently, and only voice-service's values actually gate anything.
+DEFAULT_WAKE_THRESHOLD = 0.4
+DEFAULT_VAD_THRESHOLD = 3000
 
 
 def _autocomplete_query(current) -> str:
@@ -69,6 +73,12 @@ class VoiceCog(commands.Cog):
     def _wake_word_required(self, user_id) -> bool:
         return (self.bot_settings.get("wake_word_required") or {}).get(str(user_id), True)
 
+    def _wake_threshold(self, user_id) -> float:
+        return (self.bot_settings.get("wake_thresholds") or {}).get(str(user_id), DEFAULT_WAKE_THRESHOLD)
+
+    def _vad_threshold(self, user_id) -> int:
+        return (self.bot_settings.get("voice_thresholds") or {}).get(str(user_id), DEFAULT_VAD_THRESHOLD)
+
     async def handle_voice_service_down(self):
         await self.enrollment.handle_voice_service_down()
 
@@ -105,7 +115,7 @@ class VoiceCog(commands.Cog):
     async def interrupt_threshold_autocomplete(
         self, interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[int]]:
-        current_val = int(self.bot_settings.get("voice_threshold", 3000))
+        current_val = self._vad_threshold(interaction.user.id)
         query = _autocomplete_query(current)
         opts = []
         if str(current_val) in query or not query:
@@ -119,7 +129,7 @@ class VoiceCog(commands.Cog):
     async def wake_sensitivity_autocomplete(
         self, interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[float]]:
-        current_val = float(self.bot_settings.get("wake_threshold", 0.4))
+        current_val = self._wake_threshold(interaction.user.id)
         query = _autocomplete_query(current)
         opts = []
         if str(current_val) in query or not query:
@@ -359,8 +369,8 @@ class VoiceCog(commands.Cog):
         ):
             curr_wake = (self.bot_settings.get("wake_words") or {}).get(str(interaction.user.id), "None")
             curr_timer = self.bot_settings.get("active_timer", 60)
-            curr_interrupt_thresh = self.bot_settings.get("voice_threshold", 3000)
-            curr_wake_sens = self.bot_settings.get("wake_threshold", 0.4)
+            curr_interrupt_thresh = self._vad_threshold(interaction.user.id)
+            curr_wake_sens = self._wake_threshold(interaction.user.id)
             curr_tts = self.bot_settings.get("tts_voice", "en-US-AriaNeural")
             curr_tts_on = "ON" if self.bot_settings.get("tts_enabled", True) else "OFF"
             curr_tts_speed = self.bot_settings.get("tts_speed", 1.0)
@@ -386,30 +396,30 @@ class VoiceCog(commands.Cog):
             self.bot_settings["active_timer"] = active_times
             updated.append(f"⏱️ Active Timer: `{active_times}s`")
         if interrupt_threshold is not None:
-            self.bot_settings["voice_threshold"] = interrupt_threshold
+            self.bot_settings.setdefault("voice_thresholds", {})[str(interaction.user.id)] = interrupt_threshold
             updated.append(f"🔊 Interrupt Threshold: `{interrupt_threshold}`")
             try:
                 async with aiohttp.ClientSession(timeout=NODE_REQUEST_TIMEOUT) as session:
-                    await session.post(f"{NODE_VOICE_API}/set_config", json={"voice_threshold": interrupt_threshold})
-            except aiohttp.ClientError as e:
-                self.logger.warning(f"Node.js sync failed for {interaction.guild_id}: {e}")
+                    await session.post(
+                        f"{NODE_VOICE_API}/set_vad_threshold",
+                        json={"user_id": str(interaction.user.id), "threshold": interrupt_threshold},
+                    )
+            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+                self.logger.warning(f"Node.js vad-threshold sync failed for {interaction.user.id}: {e}")
                 updated.append(f"(⚠️ Node.js Sync Failed: {e})")
-            except asyncio.TimeoutError:
-                self.logger.warning(f"Node.js sync timeout for {interaction.guild_id}")
-                updated.append("(⚠️ Node.js Sync Timeout)")
         if wake_sensitivity is not None:
             clamped_wake = max(0.05, min(0.95, wake_sensitivity))
-            self.bot_settings["wake_threshold"] = clamped_wake
+            self.bot_settings.setdefault("wake_thresholds", {})[str(interaction.user.id)] = clamped_wake
             updated.append(f"🎯 Wake Sensitivity: `{clamped_wake}`")
             try:
                 async with aiohttp.ClientSession(timeout=NODE_REQUEST_TIMEOUT) as session:
-                    await session.post(f"{NODE_VOICE_API}/set_config", json={"wake_threshold": clamped_wake})
-            except aiohttp.ClientError as e:
-                self.logger.warning(f"Node.js sync failed for {interaction.guild_id}: {e}")
+                    await session.post(
+                        f"{NODE_VOICE_API}/set_wake_threshold",
+                        json={"user_id": str(interaction.user.id), "threshold": clamped_wake},
+                    )
+            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+                self.logger.warning(f"Node.js wake-threshold sync failed for {interaction.user.id}: {e}")
                 updated.append(f"(⚠️ Node.js Sync Failed: {e})")
-            except asyncio.TimeoutError:
-                self.logger.warning(f"Node.js sync timeout for {interaction.guild_id}")
-                updated.append("(⚠️ Node.js Sync Timeout)")
         if tts_voice is not None:
             self.bot_settings["tts_voice"] = tts_voice
             updated.append(f"🗣️ TTS Voice: `{tts_voice}`")

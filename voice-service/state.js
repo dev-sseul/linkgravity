@@ -19,8 +19,18 @@ const suppressNotifyMap = new Map();
 // userId -> { rustpotter, samplesPerFrame, residual: Int16Array }
 const detectorCache = new Map();
 
+// user_id -> wake-word match threshold; absent means DEFAULT_WAKE_THRESHOLD.
+const wakeThresholds = new Map();
+
 // Object property, not a plain `let` - a `let` wouldn't propagate its reassignment across modules.
-const runtime = { vadThreshold: 3000 };
+// user_id -> interrupt/VAD RMS threshold; absent means DEFAULT_VAD_THRESHOLD.
+const vadThresholds = new Map();
+
+const DEFAULT_VAD_THRESHOLD = 3000;
+
+function vadThresholdFor(userId) {
+    return vadThresholds.get(userId) ?? DEFAULT_VAD_THRESHOLD;
+}
 
 function isGuildActive(guildId) {
     return Date.now() < (activeUntil.get(guildId) || 0);
@@ -37,6 +47,9 @@ module.exports = {
     wakeWordOptedOut,
     suppressNotifyMap,
     detectorCache,
-    runtime,
+    wakeThresholds,
+    vadThresholds,
+    DEFAULT_VAD_THRESHOLD,
+    vadThresholdFor,
     isGuildActive,
 };

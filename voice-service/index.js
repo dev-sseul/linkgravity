@@ -18,8 +18,11 @@ process.on('uncaughtException', (err) => {
 
 const { registerRoutes } = require('./routes');
 
-if (aglConfig.voice_threshold) {
-    state.runtime.vadThreshold = parseInt(aglConfig.voice_threshold) || 3000;
+for (const [userId, value] of Object.entries(aglConfig.voice_thresholds || {})) {
+    state.vadThresholds.set(userId, parseInt(value));
+}
+for (const [userId, value] of Object.entries(aglConfig.wake_thresholds || {})) {
+    state.wakeThresholds.set(userId, parseFloat(value));
 }
 
 const app = express();

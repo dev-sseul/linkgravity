@@ -108,6 +108,19 @@ function registerRoutes(app, client) {
         res.json({ success: true, was_cached: deleted });
     });
 
+    app.post('/set_wake_threshold', (req, res) => {
+        const { user_id, threshold } = req.body;
+        if (!user_id || typeof threshold !== 'number') {
+            return res.status(400).json({ error: 'user_id and numeric threshold required' });
+        }
+        state.wakeThresholds.set(user_id, threshold);
+        // The threshold is baked into the rustpotter config at build time, so the cached detector
+        // has to go with it - otherwise the new value only takes effect after some unrelated reset.
+        state.detectorCache.delete(user_id);
+        console.log(`[Wake] Threshold for ${user_id} set to ${threshold}`);
+        res.json({ success: true });
+    });
+
     app.post('/build_wakeword', async (req, res) => {
         // Builds a .rpw in-process via WakewordRefCreator, instead of shelling out to rustpotter-cli.
         try {
@@ -139,12 +152,13 @@ function registerRoutes(app, client) {
         }
     });
 
-    app.post('/set_config', (req, res) => {
-        const { voice_threshold } = req.body;
-        if (voice_threshold) {
-            state.runtime.vadThreshold = voice_threshold;
-            console.log(`[Config] Updated VAD threshold to ${state.runtime.vadThreshold}`);
+    app.post('/set_vad_threshold', (req, res) => {
+        const { user_id, threshold } = req.body;
+        if (!user_id || typeof threshold !== 'number') {
+            return res.status(400).json({ error: 'user_id and numeric threshold required' });
         }
+        state.vadThresholds.set(user_id, threshold);
+        console.log(`[Config] VAD threshold for ${user_id} set to ${threshold}`);
         res.json({ success: true });
     });
 

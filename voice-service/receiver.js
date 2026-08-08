@@ -2,12 +2,18 @@ const { EndBehaviorType } = require('@discordjs/voice');
 const prism = require('prism-media');
 const { stereoToMono, createWavHeader } = require('./audioUtils');
 const { googleSTT } = require('./stt');
-const { getDetectorForUser, feedPCMToDetector, WAKE_MATCH_THRESHOLD } = require('./wakeword');
+const { getDetectorForUser, feedPCMToDetector, wakeThresholdFor } = require('./wakeword');
 const { interruptTTS } = require('./tts');
 const state = require('./state');
 const { aglConfig } = require('./config');
-const { activeStreams, enrollingUsers, isPlaying, wakeWordOptedOut, runtime, isGuildActive } =
-    state;
+const {
+    activeStreams,
+    enrollingUsers,
+    isPlaying,
+    wakeWordOptedOut,
+    vadThresholdFor,
+    isGuildActive,
+} = state;
 
 function setupReceiver(connection, guildId, client) {
     const receiver = connection.receiver;
@@ -138,9 +144,8 @@ function setupReceiver(connection, guildId, client) {
             const isBotPlaying = isPlaying.get(guildId) || false;
 
             if (!hasInterrupted) {
-                const dynamicThreshold = isBotPlaying
-                    ? runtime.vadThreshold * 3
-                    : runtime.vadThreshold;
+                const baseThreshold = vadThresholdFor(userId);
+                const dynamicThreshold = isBotPlaying ? baseThreshold * 3 : baseThreshold;
                 if (rms > dynamicThreshold) {
                     if (interruptTTS(guildId)) {
                         console.log(
@@ -226,15 +231,17 @@ function setupReceiver(connection, guildId, client) {
                     bestDiagScoreName = diagPaddingDetection.getName();
                 }
 
-                // Real pass/fail uses bestWakeScore; bestDiagScore is a separate, much looser detector shown only for "how close" - not on the same scale, not comparable to WAKE_MATCH_THRESHOLD.
-                wakeConfirmed = bestWakeScore >= WAKE_MATCH_THRESHOLD;
+                // rustpotter only emits a detection once its own per-user threshold is met, so any
+                // score reaching here is already a pass; the number below is for the log line only.
+                const threshold = wakeThresholdFor(userId);
+                wakeConfirmed = bestWakeScoreName !== null;
                 matchedWakeWord = wakeConfirmed ? bestWakeScoreName : null;
                 console.log(
                     wakeConfirmed
                         ? `[Wake] ${userId}: CONFIRMED (score ${bestWakeScore.toFixed(3)} for ` +
-                              `"${bestWakeScoreName}", threshold ${WAKE_MATCH_THRESHOLD})`
+                              `"${bestWakeScoreName}", threshold ${threshold})`
                         : `[Wake] ${userId}: no match (score ${bestWakeScore.toFixed(3)}, ` +
-                              `threshold ${WAKE_MATCH_THRESHOLD}; diagnostic-only closeness ` +
+                              `threshold ${threshold}; diagnostic-only closeness ` +
                               `${bestDiagScore.toFixed(3)} for "${bestDiagScoreName ?? 'n/a'}" - ` +
                               `different scoring config, not directly comparable to the threshold)`,
                 );
