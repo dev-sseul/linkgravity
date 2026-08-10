@@ -3,6 +3,7 @@ from typing import Any
 
 from config import MAX_EMBED_LEN, MODEL_CHOICES, session_manager
 from messengers.registry import get_adapter_for_platform
+from services.discord_helpers import split_message
 from utils.utils import get_current_model
 
 
@@ -17,24 +18,20 @@ async def send_agy_response(
     adapter = get_adapter_for_platform(session.get("platform", "discord"))
     session_manager.save_sessions()
 
-    parts = [response_text[i : i + MAX_EMBED_LEN] for i in range(0, max(len(response_text), 1), MAX_EMBED_LEN)]
-    for idx, part in enumerate(parts):
-        is_last = idx == len(parts) - 1
+    session_model = session.get("model")
+    model_display = MODEL_CHOICES.get(session_model, session_model) if session_model else get_current_model()
 
-        if is_last:
+    parts = split_message(response_text, MAX_EMBED_LEN)
+    for idx, part in enumerate(parts):
+        if idx == len(parts) - 1:
             if not part.strip():
                 continue
+            part = f"{part}\n-# 🤖 {model_display}"
 
-            session_model = session.get("model")
-            model_display = MODEL_CHOICES.get(session_model, session_model) if session_model else get_current_model()
-            text_to_send = f"{part}\n-# 🤖 {model_display}"
-
-            status_msg = ctx.get("status_msg") if ctx else None
-            if status_msg and await adapter.edit_message(status_msg, text_to_send):
-                continue
-            await adapter.send_message(thread, text_to_send)
-        else:
-            await adapter.send_message(thread, part)
+        status_msg = ctx.get("status_msg") if ctx and idx == 0 else None
+        if status_msg and await adapter.edit_message(status_msg, part):
+            continue
+        await adapter.send_message(thread, part)
 
     files_to_send = []
     if conv_id and start_time:

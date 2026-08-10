@@ -74,7 +74,7 @@ def check_approval_intent(text: str) -> str:
         "ㅇㅇ",
         "ㅇㅋ",
         "해",
-        "콜",
+        "그래",
         "네",
         "sure",
         "yeah",
@@ -92,3 +92,31 @@ def check_approval_intent(text: str) -> str:
         if word in exact_allow:
             return "allow"
     return None
+
+
+def split_message(text: str, limit: int) -> list[str]:
+    parts = []
+    fence = None
+    remaining = text
+    while remaining:
+        # A chunk that ends mid-code-block gets closed here and reopened at the top of the next one,
+        # otherwise the client renders the rest of the message as one runaway code block.
+        prefix = f"{fence}\n" if fence else ""
+        budget = limit - len(prefix) - len("\n```")
+        if len(remaining) <= budget:
+            body, remaining = remaining, ""
+        else:
+            window = remaining[:budget]
+            cuts = [pos + len(d) for d in ("\n\n", "\n", " ") if (pos := window.rfind(d)) > 0]
+            cut = next((c for c in cuts if c > budget // 2), max(cuts, default=0))
+            body, remaining = remaining[: cut or budget], remaining[cut or budget :]
+        chunk = prefix + body
+        fence = None
+        for match in re.finditer(r"^```(\S*)", chunk, re.MULTILINE):
+            fence = None if fence else f"```{match.group(1)}"
+        if fence:
+            chunk += "\n```"
+        if parts and not re.sub(r"^```\S*$", "", chunk, flags=re.MULTILINE).strip():
+            continue
+        parts.append(chunk)
+    return parts or [""]

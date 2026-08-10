@@ -16,6 +16,7 @@ from services.discord_helpers import (
     clean_ansi,
     cleanup_images,
     handle_image_attachments,
+    split_message,
 )
 
 __all__ = [
@@ -33,6 +34,7 @@ __all__ = [
     "cleanup_images",
     "build_content_with_images",
     "clean_ansi",
+    "split_message",
     "check_approval_intent",
     "get_default_cwd",
 ]

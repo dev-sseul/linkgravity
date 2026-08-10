@@ -7,7 +7,7 @@ import discord  # only for voice/TTS text cleanup below; messaging goes through 
 
 from config import MAX_EMBED_LEN, STREAM_RATE_LIMIT_SEC, bot_settings, logger, session_manager
 from messengers.registry import get_adapter_for_thread
-from utils.utils import clean_ansi
+from utils.utils import clean_ansi, split_message
 
 
 def _clear_current_tool(thread_id: str):
@@ -46,7 +46,7 @@ class StreamUpdater:
     async def split(self):
         full_text = self.current_text.strip()
         if full_text:
-            parts = [full_text[i : i + self.MAX_EMBED_LEN] for i in range(0, len(full_text), self.MAX_EMBED_LEN)]
+            parts = split_message(full_text, self.MAX_EMBED_LEN)
             for idx, part in enumerate(parts):
                 await self._update(part, force_new=(idx > 0))
         self.status_msg = None

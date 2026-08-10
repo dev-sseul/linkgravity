@@ -9,6 +9,7 @@ from aiohttp import web
 from config import APPROVAL_TIMEOUT_SEC, MAX_EMBED_LEN, logger, session_manager
 from messengers.base import ScopeOption
 from messengers.registry import get_adapter_for_platform, get_adapter_for_thread
+from utils.utils import split_message
 
 
 def is_tool_allowed(tool_name, tool_input):
@@ -57,8 +58,8 @@ def allow_response(tool_name, tool_input):
 async def _send_chunked(adapter, thread, text: str) -> None:
     if not text:
         return
-    for i in range(0, len(text), MAX_EMBED_LEN):
-        await adapter.send_message(thread, text[i : i + MAX_EMBED_LEN])
+    for part in split_message(text, MAX_EMBED_LEN):
+        await adapter.send_message(thread, part)
 
 
 def _persist_scope_if_granted(prompt_handle):
