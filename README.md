@@ -2,15 +2,15 @@
 
 A Discord, Telegram, and Slack bot interface for the Antigravity agentic AI system. It translates Antigravity CLI prompts into chat UI components and provides voice interaction capabilities.
 
-![Tool approval buttons in Discord](https://raw.githubusercontent.com/dev-sseul/linkgravity/main/docs/images/approval-flow.png)
+![Tool approval buttons and session threads in Discord](https://raw.githubusercontent.com/dev-sseul/linkgravity/main/docs/images/approval-flow.png)
 
 ## Features
 
-- **Environment Sync:** Automatically syncs with the host's `~/.gemini` configuration.
-- **Voice Interaction:** Supports voice channels with adaptive voice activity detection to segment speech and filter environmental noise, plus live "listening..." feedback while you're still talking.
-  - **Wake Word Recognition:** Uses phoneme-level similarity to detect wake words and activate voice commands.
+- **Sessions as Threads:** Each `agy` conversation lives in its own thread, so several can run side by side and stay readable later. Threads get named from what you actually talked about instead of staying `Session-XXXX`.
 - **Approval Flow:** Command and tool-call approvals become interactive chat buttons. Chained shell commands are approved individually, and any approval can be scoped to auto-allow that command or tool going forward - something plain `agy` doesn't do.
+- **Voice Interaction:** Talk to the agent from a Discord voice channel and hear its replies. Say your wake word to get its attention, so side conversation in the channel doesn't set it off.
 - **Multi-Modal Input:** Attach files for the AI to read, including audio, which gets transcribed to text automatically.
+- **Same Agent as Your Terminal:** Reads the `agy` setup already on the machine, so sessions started from chat use the same models and settings you use locally.
 
 ## Supported Platforms
 
@@ -39,9 +39,9 @@ In the [Discord Developer Portal](https://discord.com/developers/applications):
 2. Under **Privileged Gateway Intents**, enable **Message Content Intent** - required, since the bot reads message text/attachments.
 3. Click **Reset Token** to reveal the bot token, and copy it - this is what goes into `lgy setup`'s `discord_token`.
 4. Go to **OAuth2 > URL Generator** in the sidebar. Under **Scopes**, check **bot** and **applications.commands**. Under the **Bot Permissions** box that appears below, check:
-   - Send Messages, Send Messages in Threads, Create Public Threads
-   - Read Message History, Attach Files, Embed Links, Add Reactions
-   - Connect, Speak (for voice channel support)
+    - Send Messages, Send Messages in Threads, Create Public Threads
+    - Read Message History, Attach Files, Embed Links, Add Reactions
+    - Connect, Speak (for voice channel support)
 5. Copy the **Generated URL** at the bottom of that page, open it in a browser, and invite the bot to your server.
 
 ### Creating the Telegram bot
@@ -54,13 +54,13 @@ Slack has more moving parts than the others - two separate tokens, and a few set
 
 1. Go to [api.slack.com/apps](https://api.slack.com/apps) > **Create New App** > **From scratch**, name it, and pick your workspace.
 2. **Socket Mode** (left sidebar) > toggle it on. This avoids needing a public HTTP endpoint. Slack will prompt you to generate an app-level token here - name it anything, add the `connections:write` scope, and **Generate**. Copy this token (starts with `xapp-`) - this is `slack_app_token`.
-   - If it doesn't prompt you, go to **Basic Information > App-Level Tokens > Generate Token and Scopes** instead.
+    - If it doesn't prompt you, go to **Basic Information > App-Level Tokens > Generate Token and Scopes** instead.
 3. **OAuth & Permissions** (left sidebar) > scroll to **Scopes > Bot Token Scopes** (not **User Token Scopes** - that's a different section further up the page, for a different token, and is not used here). **Add an OAuth Scope** for each of: `chat:write`, `channels:history`, `groups:history`, `im:history`, `mpim:history`, `reactions:write`, `files:read`, `files:write`.
 4. Scroll to the top of that same page > **Install to Workspace** > **Allow**. This generates the token under **OAuth Tokens > Bot User OAuth Token**, starting with `xoxb-`. Copy that one - this is `slack_bot_token`.
-   - It's easy to grab the wrong token here - the page also shows a **User OAuth Token** (`xoxp-...`) further down, which is a different thing and won't work for this bot.
+    - It's easy to grab the wrong token here - the page also shows a **User OAuth Token** (`xoxp-...`) further down, which is a different thing and won't work for this bot.
 5. **App Home** (left sidebar) > under **Show Tabs**, turn on **Messages Tab**, then check **Allow users to send Slash commands and messages from the messages tab** - this is what lets you DM the bot at all. (If this section looks greyed out, it's because step 3 hasn't been saved/installed yet - go back and do that first.)
 6. **Event Subscriptions** (left sidebar) > toggle **Enable Events** on > under **Subscribe to bot events**, add `message.channels`, `message.groups`, `message.im`, and `message.mpim` > **Save Changes**.
-7. **Slash Commands** (left sidebar) > **Create New Command**, three times, for `/new`, `/model`, and `/credit` (any description/hint text is fine - only the command name matters).
+7. **Slash Commands** (left sidebar) > **Create New Command**, four times, for `/new`, `/model`, `/credit`, and `/permissions` (any description/hint text is fine - only the command name matters).
 8. Back on **OAuth & Permissions**, since scopes/events changed after the initial install, click **Reinstall to Workspace** to push those changes live. Any time you change scopes or events later, you'll need to repeat this step.
 9. In Slack itself, for any **channel** (not DM) you want the bot usable in, run `/invite @<your bot's name>` there first - the bot can't post in a channel it hasn't been added to.
 
