@@ -197,10 +197,7 @@ async def handle_approve_request(request):
                                 break
                     except ValueError:
                         pass
-                elif is_tool_allowed(tool_name, {"CommandLine": sub_cmd}) or (
-                    conv_id in session_manager.session_allowed_tools
-                    and tool_name in session_manager.session_allowed_tools[conv_id]
-                ):
+                elif is_tool_allowed(tool_name, {"CommandLine": sub_cmd}):
                     is_auto_allowed = True
 
                 if is_auto_allowed:
@@ -271,14 +268,7 @@ async def handle_approve_request(request):
             return allow_response(tool_name, tool_input)
 
         else:
-            is_auto_allowed = False
-            if is_tool_allowed(tool_name, tool_input) or (
-                conv_id in session_manager.session_allowed_tools
-                and tool_name in session_manager.session_allowed_tools[conv_id]
-            ):
-                is_auto_allowed = True
-
-            if is_auto_allowed:
+            if is_tool_allowed(tool_name, tool_input):
                 if target_thread and tool_msg_text:
                     await send_ordered(
                         target_thread_id, lambda: _send_chunked(adapter, target_thread, tool_msg_formatted)

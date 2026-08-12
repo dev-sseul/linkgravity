@@ -24,7 +24,6 @@ class SessionManager:
         self.active_approval_by_conv: dict[str, str] = {}
 
         self.persistent_allowed: dict = self._load_persistent()
-        self.session_allowed_tools: dict[str, set] = {}
 
     def _load_sessions(self) -> dict:
         from config import logger
