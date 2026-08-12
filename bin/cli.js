@@ -376,11 +376,8 @@ if (cmd === 'version' || cmd === '-v' || cmd === '--version') {
     }
 
     if (!isEnvironmentReady()) {
-        console.log(
-            `\n${color.yellow}⚠${color.reset} Python environment isn't set up yet - ` +
-                `run ${color.cyan}lgy setup${color.reset} first (it installs everything on its first run).\n`,
-        );
-        process.exit(1);
+        info('Some dependencies are missing - installing them first...');
+        require('../npm-scripts/ensure-env').ensureEnvironment();
     }
 
     info('Starting LinkGravity daemon...');
@@ -601,6 +598,12 @@ if (cmd === 'version' || cmd === '-v' || cmd === '--version') {
         process.exit(1);
     }
     success(`Installed v${latestVersion}.`);
+
+    // The new install ships without voice-service/node_modules, so restore anything the
+    // directory swap dropped. Loaded here rather than at the top of the file: by now npm has
+    // replaced this package on disk, and the copy required at startup is the pre-update one.
+    delete require.cache[require.resolve('../npm-scripts/ensure-env')];
+    require('../npm-scripts/ensure-env').ensureEnvironment();
 
     if (!procBeforeUpdate) {
         info("Daemon wasn't running - starting it fresh...");
