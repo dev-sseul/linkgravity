@@ -12,6 +12,7 @@ from messengers.base import (
     IncomingAttachment,
     IncomingMessage,
     MessengerAdapter,
+    PermissionListHandle,
     PromptHandle,
     ScopeOption,
     ToolApprovalOutcome,
@@ -30,6 +31,58 @@ class _ErrorLoggingView(discord.ui.View):
                 await interaction.response.send_message(error_msg, ephemeral=True)
         except Exception:
             pass
+
+
+class _DiscordPermissionList(PermissionListHandle):
+    def __init__(self, on_revoke):
+        self.on_revoke = on_revoke
+        self.page = 0
+        self.message: discord.Message | None = None
+
+    def _build(self):
+        from services import permissions
+
+        entries = permissions.list_entries()
+        page_entries, self.page, total_pages = permissions.page_of(entries, self.page)
+        embed = discord.Embed(
+            title="🔐 Allowed Permissions",
+            description=permissions.render_body(page_entries, self.page, total_pages),
+            color=discord.Color.blurple(),
+        )
+        view = _ErrorLoggingView(timeout=None)
+
+        for entry in page_entries:
+            label = f"🗑️ {permissions.entry_label(entry)}"
+            button = discord.ui.Button(label=label[:80], style=discord.ButtonStyle.gray)
+
+            async def revoke_callback(interaction: discord.Interaction, entry=entry):
+                await self.on_revoke(entry)
+                await self._refresh(interaction)
+
+            button.callback = revoke_callback
+            view.add_item(button)
+
+        if total_pages > 1:
+            for label, delta in (("◀ Prev", -1), ("Next ▶", 1)):
+                nav = discord.ui.Button(label=label, style=discord.ButtonStyle.blurple)
+
+                async def nav_callback(interaction: discord.Interaction, delta=delta):
+                    self.page += delta
+                    await self._refresh(interaction)
+
+                nav.callback = nav_callback
+                view.add_item(nav)
+
+        return embed, view
+
+    async def _refresh(self, interaction: discord.Interaction) -> None:
+        embed, view = self._build()
+        await interaction.response.edit_message(embed=embed, view=view)
+
+    async def send(self, conversation_ref: discord.abc.Messageable) -> discord.Message:
+        embed, view = self._build()
+        self.message = await conversation_ref.send(embed=embed, view=view)
+        return self.message
 
 
 class _DiscordPromptHandle(PromptHandle):
@@ -214,6 +267,9 @@ class DiscordAdapter(MessengerAdapter):
         view.add_item(btn_reject)
 
         return handle
+
+    def create_permission_list(self, on_revoke) -> PermissionListHandle:
+        return _DiscordPermissionList(on_revoke)
 
     def create_question_prompt(
         self,

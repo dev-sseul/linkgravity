@@ -19,6 +19,7 @@ from messengers.base import (
     IncomingAttachment,
     IncomingMessage,
     MessengerAdapter,
+    PermissionListHandle,
     PromptHandle,
     ScopeOption,
     ToolApprovalOutcome,
@@ -50,6 +51,63 @@ async def safe_query_edit(query, **kwargs) -> None:
             return
         logger.error(f"Failed to edit Telegram message via callback query: {e}")
         raise
+
+
+class _TelegramPermissionList(PermissionListHandle):
+    def __init__(self, bot, callbacks: dict, on_revoke):
+        self.bot = bot
+        self._callbacks = callbacks
+        self.on_revoke = on_revoke
+        self.page = 0
+        self.list_id = uuid.uuid4().hex[:12]
+        self._keys: list[str] = []
+
+    def _build(self):
+        from services import permissions
+
+        for key in self._keys:
+            self._callbacks.pop(key, None)
+        self._keys = []
+
+        entries = permissions.list_entries()
+        page_entries, self.page, total_pages = permissions.page_of(entries, self.page)
+        body = permissions.render_body(page_entries, self.page, total_pages)
+        text = f"<b>🔐 Allowed Permissions</b>\n\n{html.escape(body)}"
+        keyboard: list[list[InlineKeyboardButton]] = []
+
+        for i, entry in enumerate(page_entries):
+            key = f"{self.list_id}:revoke:{i}"
+            self._callbacks[key] = lambda query, entry=entry: self._revoke(entry, query)
+            self._keys.append(key)
+            keyboard.append([InlineKeyboardButton(f"🗑️ {permissions.entry_label(entry)}"[:64], callback_data=key)])
+
+        if total_pages > 1:
+            row = []
+            for label, delta in (("◀ Prev", -1), ("Next ▶", 1)):
+                key = f"{self.list_id}:page:{delta}"
+                self._callbacks[key] = lambda query, delta=delta: self._turn(delta, query)
+                self._keys.append(key)
+                row.append(InlineKeyboardButton(label, callback_data=key))
+            keyboard.append(row)
+
+        return text, InlineKeyboardMarkup(keyboard)
+
+    async def _redraw(self, query) -> None:
+        text, markup = self._build()
+        await query.answer()
+        await safe_query_edit(query, text=text, parse_mode="HTML", reply_markup=markup)
+
+    async def _revoke(self, entry, query) -> None:
+        await self.on_revoke(entry)
+        await self._redraw(query)
+
+    async def _turn(self, delta: int, query) -> None:
+        self.page += delta
+        await self._redraw(query)
+
+    async def send(self, conversation_ref: int) -> Message:
+        text, markup = self._build()
+        return await self.bot.send_message(chat_id=conversation_ref, text=text, reply_markup=markup, parse_mode="HTML")
 
 
 class _TelegramPromptHandle(PromptHandle):
@@ -284,6 +342,9 @@ class TelegramAdapter(MessengerAdapter):
             self.bot, text, InlineKeyboardMarkup(keyboard), cleanup=lambda: [self._callbacks.pop(k, None) for k in keys]
         )
         return handle
+
+    def create_permission_list(self, on_revoke) -> PermissionListHandle:
+        return _TelegramPermissionList(self.bot, self._callbacks, on_revoke)
 
     def create_question_prompt(
         self,

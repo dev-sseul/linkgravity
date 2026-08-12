@@ -54,6 +54,18 @@ class ToolApprovalOutcome:
     scope: ScopeOption | None = None
 
 
+@dataclass
+class PermissionEntry:
+    kind: str
+    scope: str
+
+
+class PermissionListHandle(ABC):
+    @abstractmethod
+    async def send(self, conversation_ref: Any) -> Any:
+        raise NotImplementedError
+
+
 class PromptHandle(ABC):
     outcome: ToolApprovalOutcome | None = None
 
@@ -115,6 +127,10 @@ class MessengerAdapter(ABC):
         body: str,
         scope_options: list[ScopeOption],
     ) -> PromptHandle:
+        raise NotImplementedError
+
+    @abstractmethod
+    def create_permission_list(self, on_revoke: Callable[[PermissionEntry], Awaitable[None]]) -> PermissionListHandle:
         raise NotImplementedError
 
     @abstractmethod

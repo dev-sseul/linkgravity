@@ -17,6 +17,7 @@ from messengers.base import (
     IncomingAttachment,
     IncomingMessage,
     MessengerAdapter,
+    PermissionListHandle,
     PromptHandle,
     ScopeOption,
     ToolApprovalOutcome,
@@ -83,6 +84,77 @@ class SlackMessageRef:
     def __init__(self, channel: str, ts: str):
         self.channel = channel
         self.ts = ts
+
+
+class _SlackPermissionList(PermissionListHandle):
+    def __init__(self, client: AsyncWebClient, callbacks: dict, on_revoke):
+        self.client = client
+        self._callbacks = callbacks
+        self.on_revoke = on_revoke
+        self.page = 0
+        self.list_id = uuid.uuid4().hex[:12]
+        self._keys: list[str] = []
+        self.channel: str | None = None
+        self.ts: str | None = None
+
+    def _build(self):
+        from services import permissions
+
+        for key in self._keys:
+            self._callbacks.pop(key, None)
+        self._keys = []
+
+        entries = permissions.list_entries()
+        page_entries, self.page, total_pages = permissions.page_of(entries, self.page)
+        body = permissions.render_body(page_entries, self.page, total_pages)
+        text = f"*🔐 Allowed Permissions*\n\n{body}"
+        blocks = [{"type": "section", "text": {"type": "mrkdwn", "text": text[:2990]}}]
+        elements = []
+
+        for i, entry in enumerate(page_entries):
+            key = f"{self.list_id}:revoke:{i}"
+            self._callbacks[key] = lambda b, c, entry=entry: self._revoke(entry)
+            self._keys.append(key)
+            label = f"🗑️ {permissions.entry_label(entry)}"
+            elements.append({"type": "button", "text": {"type": "plain_text", "text": label[:75]}, "action_id": key})
+
+        if total_pages > 1:
+            for label, delta in (("◀ Prev", -1), ("Next ▶", 1)):
+                key = f"{self.list_id}:page:{delta}"
+                self._callbacks[key] = lambda b, c, delta=delta: self._turn(delta)
+                self._keys.append(key)
+                elements.append({"type": "button", "text": {"type": "plain_text", "text": label}, "action_id": key})
+
+        # 25 is Slack's hard per-block limit on action elements.
+        for chunk_start in range(0, len(elements), 25):
+            blocks.append({"type": "actions", "elements": elements[chunk_start : chunk_start + 25]})
+
+        return text, blocks
+
+    async def _redraw(self) -> None:
+        text, blocks = self._build()
+        if self.channel and self.ts:
+            await self.client.chat_update(channel=self.channel, ts=self.ts, text=text, blocks=blocks)
+
+    async def _revoke(self, entry) -> None:
+        await self.on_revoke(entry)
+        await self._redraw()
+
+    async def _turn(self, delta: int) -> None:
+        self.page += delta
+        await self._redraw()
+
+    async def send(self, conversation_ref: SlackConversationRef) -> dict:
+        text, blocks = self._build()
+        resp = await self.client.chat_postMessage(
+            channel=conversation_ref.channel,
+            thread_ts=conversation_ref.api_thread_ts,
+            text=text,
+            blocks=blocks,
+        )
+        self.channel = resp["channel"]
+        self.ts = resp["ts"]
+        return resp
 
 
 class _SlackPromptHandle(PromptHandle):
@@ -357,6 +429,9 @@ class SlackAdapter(MessengerAdapter):
             self.client, text, blocks, cleanup=lambda: [self._callbacks.pop(k, None) for k in keys]
         )
         return handle
+
+    def create_permission_list(self, on_revoke) -> PermissionListHandle:
+        return _SlackPermissionList(self.client, self._callbacks, on_revoke)
 
     def create_question_prompt(
         self,

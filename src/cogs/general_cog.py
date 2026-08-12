@@ -255,6 +255,23 @@ class GeneralCog(commands.Cog):
         except Exception as e:
             await interaction.response.send_message(f"⚠️ Failed to update settings: {e}", ephemeral=True)
 
+    @app_commands.command(name="permissions", description="View and remove previously allowed tools and commands")
+    async def cmd_permissions(self, interaction: discord.Interaction):
+        if not allowed(interaction.user.id):
+            return await interaction.response.send_message("❌ Denied", ephemeral=True)
+
+        from messengers.registry import get_adapter_for_platform
+        from services import permissions
+
+        adapter = get_adapter_for_platform("discord")
+
+        async def on_revoke(entry):
+            permissions.revoke(entry)
+
+        handle = adapter.create_permission_list(on_revoke)
+        await handle.send(interaction.channel)
+        await interaction.response.send_message("🔐 Permission list posted above.", ephemeral=True)
+
     @app_commands.command(
         name="stop", description="Stop the currently generating response or task (Equivalent to ESC in CLI)"
     )
@@ -278,9 +295,21 @@ class GeneralCog(commands.Cog):
             # Must clear conversation_id too, not just status - pending requires both unset.
             session_manager.set_session(thread_id, {**session, "status": "pending", "conversation_id": None})
 
+        # The typing indicator only clears when the handler leaves its `async with adapter.typing()`
+        # block, and that block outlives the agy process (title generation, final send), so killing
+        # the process alone can leave the thread stuck showing "is thinking...".
+        handler = session_manager.get_handler_task(thread_id)
+        cancelled = bool(handler and handler is not asyncio.current_task() and not handler.done())
+        if cancelled:
+            handler.cancel()
+            session_manager.remove_handler_task(thread_id)
+
         from core.agy_runner import stop_active_process
 
         if stop_active_process(thread_id):
-            await interaction.response.send_message("🛑 Process stopped natively.", ephemeral=True)
+            msg = "🛑 Process stopped natively."
+        elif cancelled:
+            msg = "🛑 Stopped."
         else:
-            await interaction.response.send_message("🛑 Process stopped.", ephemeral=True)
+            msg = "🛑 Nothing was running."
+        await interaction.response.send_message(msg, ephemeral=True)

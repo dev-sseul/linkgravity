@@ -135,6 +135,23 @@ async def cmd_model(update: Update, context) -> None:
     )
 
 
+async def cmd_permissions(update: Update, context) -> None:
+    user = update.effective_user
+    adapter: TelegramAdapter = context.bot_data["adapter"]
+
+    if not allowed(user.id, "telegram"):
+        await update.message.reply_text("❌ Denied")
+        return
+
+    from services import permissions
+
+    async def on_revoke(entry):
+        permissions.revoke(entry)
+
+    handle = adapter.create_permission_list(on_revoke)
+    await handle.send(update.effective_chat.id)
+
+
 async def cmd_credit(update: Update, context) -> None:
     user = update.effective_user
     adapter: TelegramAdapter = context.bot_data["adapter"]
@@ -207,6 +224,7 @@ async def on_ready(app: Application) -> None:
             BotCommand("new", "Start a new session (or /start)"),
             BotCommand("model", "Change the AI model for this session"),
             BotCommand("credit", "Turn AI Credits on/off"),
+            BotCommand("permissions", "View and remove allowed tools and commands"),
         ]
     )
     logger.info(f"✅ Bot is fully online and ready! Logged in as @{app.bot.username}")
@@ -221,6 +239,7 @@ def build_application() -> Application:
     app.add_handler(CommandHandler(["new", "start"], cmd_new))
     app.add_handler(CommandHandler("model", cmd_model))
     app.add_handler(CommandHandler("credit", cmd_credit))
+    app.add_handler(CommandHandler("permissions", cmd_permissions))
     app.add_handler(CallbackQueryHandler(adapter.handle_callback_query))
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, on_message))
     app.add_error_handler(on_error)

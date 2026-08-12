@@ -14,7 +14,12 @@ from config import SLACK_APP_TOKEN, SLACK_BOT_TOKEN, allowed, bot_settings, logg
 from core import platform_health
 from handlers.message_router import handle_message
 from messengers.registry import register_adapter
-from messengers.slack_adapter import SlackAdapter, encode_conversation_id, latest_channel_session
+from messengers.slack_adapter import (
+    SlackAdapter,
+    SlackConversationRef,
+    encode_conversation_id,
+    latest_channel_session,
+)
 from utils.utils import get_default_cwd
 
 
@@ -129,6 +134,25 @@ async def cmd_model(ack, body, respond, context) -> None:
     await respond(f"🤖 Model changed: *{final_model}*\n💾 Also set as the default for new sessions.")
 
 
+async def cmd_permissions(ack, body, respond, context) -> None:
+    await ack()
+    adapter: SlackAdapter = context["adapter"]
+    user_id = body["user_id"]
+    channel = body["channel_id"]
+
+    if not allowed(user_id, "slack"):
+        await respond("❌ Denied")
+        return
+
+    from services import permissions
+
+    async def on_revoke(entry):
+        permissions.revoke(entry)
+
+    handle = adapter.create_permission_list(on_revoke)
+    await handle.send(SlackConversationRef(channel=channel, thread_ts=None))
+
+
 async def cmd_credit(ack, body, respond, context) -> None:
     await ack()
     adapter: SlackAdapter = context["adapter"]
@@ -212,6 +236,7 @@ def build_app() -> tuple[AsyncApp, SlackAdapter]:
     app.command("/new")(cmd_new)
     app.command("/model")(cmd_model)
     app.command("/credit")(cmd_credit)
+    app.command("/permissions")(cmd_permissions)
     app.event("message")(on_message)
     app.action(re.compile(".*"))(on_action)
     app.view(re.compile(".*"))(on_view_submission)
