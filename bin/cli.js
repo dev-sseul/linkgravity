@@ -45,8 +45,14 @@ function runPm2(args, silent = true) {
     const result = spawnSync(process.execPath, [PM2_BIN, ...args], {
         stdio: stdioOpt,
         cwd: path.join(__dirname, '..'),
-        // pm2 gives Python a pipe not a TTY, so it block-buffers stdout and can sit on log lines indefinitely - force line buffering.
-        env: { ...process.env, PYTHONUNBUFFERED: '1' },
+        env: {
+            ...process.env,
+            // pm2 gives Python a pipe not a TTY, so it block-buffers stdout and can sit on log lines indefinitely - force line buffering.
+            PYTHONUNBUFFERED: '1',
+            // Version managers (fnm, nvm) put node on PATH from a shell hook the daemon never runs,
+            // so the bot's own `node` lookup for voice-service would fail without this.
+            PATH: `${path.dirname(process.execPath)}${path.delimiter}${process.env.PATH || ''}`,
+        },
     });
 
     if (result.error) {
