@@ -13,6 +13,10 @@ _intentionally_stopped = set()
 
 _STDOUT_BUFFER_SIZE = 65536
 
+# Returned as ordinary output, not raised - callers that need to distinguish failure from a
+# real answer have to compare against this.
+TIMEOUT_MESSAGE = "🛑 AI Task timed out."
+
 
 @functools.lru_cache(maxsize=1)
 def _find_preload_lib() -> tuple[str, str] | None:
@@ -315,7 +319,7 @@ async def run_agy(
                     logger.warning("[AGY RETRY] Global timeout. Retrying...")
                     await asyncio.sleep(2.0)
                     continue
-                msg = "🛑 AI Task timed out."
+                msg = TIMEOUT_MESSAGE
                 if stream_queue is not None:
                     await stream_queue.put(("\n\n" + msg, True))
                 return msg
@@ -388,7 +392,7 @@ async def generate_thread_title(user_input: str, response: str) -> str:
         )
         title = await run_agy("--print", prompt, timeout=30)
         title = title.strip().strip('"').strip("'")
-        if not title or len(title) > 80:
+        if not title or len(title) > 80 or title == TIMEOUT_MESSAGE:
             return fallback
         return title
     except Exception as e:

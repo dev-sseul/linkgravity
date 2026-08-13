@@ -73,13 +73,9 @@ async def handle_pending_session(
             await queue.put(("__END__", True))
             await stream_task
 
-            response_text = result_text
-            if adapter.should_auto_title(thread):
-                new_title = await generate_thread_title(content, response_text)
-                await adapter.rename_conversation(thread, new_title)
-                await update_agy_conversation_title(new_conv_id, new_title)
+            needs_title = adapter.should_auto_title(thread)
 
-            response_text = await render_thought_process(new_conv_id, ctx, response_text, thread)
+            response_text = await render_thought_process(new_conv_id, ctx, result_text, thread)
 
             session["conversation_id"] = new_conv_id
             session["created_at"] = datetime.now().isoformat()
@@ -87,6 +83,13 @@ async def handle_pending_session(
             session_manager.save_sessions()
 
             await send_agy_response(thread, response_text, session, ctx, start_time, new_conv_id)
+
+        # Outside the typing indicator: the answer is already on screen, and leaving "typing"
+        # up during the extra title call reads as if more output is still coming.
+        if needs_title:
+            new_title = await generate_thread_title(content, result_text)
+            await adapter.rename_conversation(thread, new_title)
+            await update_agy_conversation_title(new_conv_id, new_title)
     finally:
         cleanup_images(image_paths)
 
