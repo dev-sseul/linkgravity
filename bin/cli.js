@@ -32,13 +32,17 @@ function success(msg) {
     console.log(`${color.green}✔${color.reset} ${msg}`);
 }
 
+// Resolved rather than run through npx: pm2 is a direct dependency, and npx wraps it in
+// "npm exec" + "sh -c", which leaves the real process orphaned when we try to kill it.
+const PM2_BIN = require.resolve('pm2/bin/pm2');
+
 function info(msg) {
     console.log(`\n${color.cyan}▶${color.reset} ${msg}`);
 }
 
 function runPm2(args, silent = true) {
     const stdioOpt = silent ? 'pipe' : 'inherit';
-    const result = spawnSync('npx', ['-y', 'pm2', ...args], {
+    const result = spawnSync(process.execPath, [PM2_BIN, ...args], {
         stdio: stdioOpt,
         cwd: path.join(__dirname, '..'),
         // pm2 gives Python a pipe not a TTY, so it block-buffers stdout and can sit on log lines indefinitely - force line buffering.
@@ -119,7 +123,7 @@ function colorizeLevel(line) {
 }
 
 function runPm2LogsStream(args, printLine) {
-    const cp = spawn('npx', ['-y', 'pm2', ...args], { cwd: path.join(__dirname, '..') });
+    const cp = spawn(process.execPath, [PM2_BIN, ...args], { cwd: path.join(__dirname, '..') });
 
     const isNoise = (line) =>
         line.trim().length === 0 ||
@@ -160,6 +164,8 @@ function runPm2LogsStream(args, printLine) {
         stdoutHandler.flush();
         stderrHandler.flush();
     });
+    // Ctrl-C reaches pm2 too (same process group), but an unhandled parent exit would leave it tailing.
+    process.on('exit', () => cp.kill());
 }
 
 function runPm2LogsClean(args, showStamps = false) {
@@ -175,10 +181,7 @@ function verifyStartup() {
             `${color.cyan}▶${color.reset} Verifying startup status (waiting for bot to come online)...`,
         );
 
-        // Spawned directly instead of through npx: npx wraps pm2 in "npm exec" + "sh -c", so cp.kill()
-        // reaps only the wrapper and leaves the real pm2 logs process orphaned onto init.
-        const pm2Bin = require.resolve('pm2/bin/pm2');
-        let cp = spawn(process.execPath, [pm2Bin, 'logs', LGY_PM2_NAME, '--raw', '--lines', '0'], {
+        let cp = spawn(process.execPath, [PM2_BIN, 'logs', LGY_PM2_NAME, '--raw', '--lines', '0'], {
             cwd: path.join(__dirname, '..'),
         });
 
@@ -282,7 +285,7 @@ function findAgyBin() {
 }
 
 function getPm2Proc() {
-    const jlist = spawnSync('npx', ['-y', 'pm2', 'jlist'], { stdio: 'pipe' });
+    const jlist = spawnSync(process.execPath, [PM2_BIN, 'jlist'], { stdio: 'pipe' });
     if (jlist.status !== 0) return null;
 
     // pm2 can print noise before the real JSON (version banners, ANSI escapes, daemon-spawn logs) that
