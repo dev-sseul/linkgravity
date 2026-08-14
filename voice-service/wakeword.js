@@ -20,8 +20,14 @@ function loadRustpotterModule() {
     return rustpotterModPromise;
 }
 
-// Wake-word confirm cutoff - must stay well above ~0.05 (rustpotter's countdown never finalizes if noise/silence clears it too); 0.4 chosen after live use kept narrowly missing genuine hits just under 0.5.
+// Wake-word confirm cutoff, applied in receiver.js against the detection score - 0.4 chosen after
+// live use kept narrowly missing genuine hits just under 0.5.
 const DEFAULT_WAKE_THRESHOLD = 0.4;
+
+// What rustpotter itself is told to use. It emits nothing below its own threshold, so this has to
+// sit under every allowed user threshold or misses would report no score at all. Not lower than
+// this either: by ~0.15 its countdown gets cleared by noise/silence before anything confirms.
+const DETECTION_FLOOR = 0.2;
 
 function wakeThresholdFor(userId) {
     return wakeThresholds.get(userId) ?? DEFAULT_WAKE_THRESHOLD;
@@ -41,13 +47,13 @@ async function getDetectorForUser(userId) {
     config.setSampleRate(48000);
     config.setSampleFormat(mod.SampleFormat.i16);
     config.setChannels(1);
-    config.setThreshold(wakeThresholdFor(userId));
+    config.setThreshold(DETECTION_FLOOR);
     config.setAveragedThreshold(0);
     // Live logs showed genuine attempts peaking above threshold but not sustaining 4 positive-scoring
     // frames; lowered from 4. STT-side prefix-similarity check is the backstop against false wakes.
     config.setMinScores(2);
     // Max (best of the 5 enrolled samples) beats Median here - real speech isn't consistent enough
-    // for Median's "middle sample must also score well" requirement; minScores compensates.
+    // for Median's "middle sample must also score well" requirement.
     config.setScoreMode(mod.ScoreMode.max);
     // Enrollment and live-call volume rarely match (distance, speaking softly); without this, that
     // mismatch alone can push a genuine match below threshold.
@@ -56,29 +62,10 @@ async function getDetectorForUser(userId) {
     const rustpotter = mod.Rustpotter.new(config);
     rustpotter.addWakeword(rpwFile, fs.readFileSync(path.join(userDir, rpwFile)));
 
-    // Diagnostic-only twin (same audio) so "no match" logs show a closeness score - never gates wake behavior.
-    const diagConfig = mod.RustpotterConfig.new();
-    diagConfig.setSampleRate(48000);
-    diagConfig.setSampleFormat(mod.SampleFormat.i16);
-    diagConfig.setChannels(1);
-    diagConfig.setThreshold(0.01);
-    diagConfig.setAveragedThreshold(0);
-    diagConfig.setMinScores(1);
-    diagConfig.setEager(true);
-    diagConfig.setScoreMode(mod.ScoreMode.max);
-    diagConfig.setGainNormalizerEnabled(true);
-    const diagRustpotter = mod.Rustpotter.new(diagConfig);
-    diagRustpotter.addWakeword(rpwFile, fs.readFileSync(path.join(userDir, rpwFile)));
-
     const entry = {
         rustpotter,
         samplesPerFrame: rustpotter.getSamplesPerFrame(),
         residual: new Int16Array(0),
-        diag: {
-            rustpotter: diagRustpotter,
-            samplesPerFrame: diagRustpotter.getSamplesPerFrame(),
-            residual: new Int16Array(0),
-        },
     };
     console.log(
         `[Wake] Loaded detector for ${userId} from ${rpwFile}: samplesPerFrame=${entry.samplesPerFrame}`,
@@ -112,6 +99,7 @@ function feedPCMToDetector(entry, chunk) {
 module.exports = {
     WAKE_REF_DIR,
     DEFAULT_WAKE_THRESHOLD,
+    DETECTION_FLOOR,
     wakeThresholdFor,
     loadRustpotterModule,
     getDetectorForUser,

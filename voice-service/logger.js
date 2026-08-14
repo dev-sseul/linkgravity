@@ -1,6 +1,8 @@
 const originalLog = console.log;
 const originalError = console.error;
 
+const debugEnabled = (process.env.LOG_LEVEL || 'INFO').toUpperCase() === 'DEBUG';
+
 function getTimestamp() {
     const now = new Date();
     const offset = now.getTimezoneOffset() * 60000;
@@ -13,4 +15,9 @@ console.log = function (...args) {
 };
 console.error = function (...args) {
     originalError(`${getTimestamp()} ERROR Voice:`, ...args);
+};
+console.debug = function (...args) {
+    if (debugEnabled) {
+        originalLog(`${getTimestamp()} DEBUG Voice:`, ...args);
+    }
 };

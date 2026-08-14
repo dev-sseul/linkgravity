@@ -20,6 +20,7 @@ NODE_REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=5)
 # decide these independently, and only voice-service's values actually gate anything.
 DEFAULT_WAKE_THRESHOLD = 0.4
 DEFAULT_VAD_THRESHOLD = 3000
+MIN_WAKE_THRESHOLD = 0.2
 
 
 def _autocomplete_query(current) -> str:
@@ -324,7 +325,7 @@ class VoiceCog(commands.Cog):
         wake_word="The single word/phrase that wakes the bot (recorded in your voice)",
         active_times="Duration in seconds the bot stays awake",
         interrupt_threshold="Mic volume that interrupts (barges into) TTS playback (1000~10000)",
-        wake_sensitivity="Wake word match sensitivity (0.1~0.9, lower = easier to trigger but more false wakes)",
+        wake_sensitivity="Wake word match sensitivity (0.2~0.9, lower = easier to trigger but more false wakes)",
         tts_voice="Select the AI TTS voice",
         tts_enabled="Turn Text-to-Speech ON or OFF",
         tts_speed="TTS playback speed multiplier, e.g. 1.3 for 1.3x (0.5~2.0)",
@@ -408,7 +409,7 @@ class VoiceCog(commands.Cog):
                 self.logger.warning(f"Node.js vad-threshold sync failed for {interaction.user.id}: {e}")
                 updated.append(f"(⚠️ Node.js Sync Failed: {e})")
         if wake_sensitivity is not None:
-            clamped_wake = max(0.05, min(0.95, wake_sensitivity))
+            clamped_wake = max(MIN_WAKE_THRESHOLD, min(0.95, wake_sensitivity))
             self.bot_settings.setdefault("wake_thresholds", {})[str(interaction.user.id)] = clamped_wake
             updated.append(f"🎯 Wake Sensitivity: `{clamped_wake}`")
             try:

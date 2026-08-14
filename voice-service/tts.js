@@ -14,7 +14,7 @@ function interruptTTS(guildId) {
 
     if (player && player.state.status !== AudioPlayerStatus.Idle) {
         player.stop();
-        console.log(`[VAD] Interrupted TTS in guild ${guildId}`);
+        console.debug(`[VAD] Interrupted TTS in guild ${guildId}`);
         interrupted = true;
     }
 
