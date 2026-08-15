@@ -75,6 +75,8 @@ function setupReceiver(connection, guildId, client) {
         let detectorEntry = null;
         let bestWakeScore = 0;
         let bestWakeScoreName = null;
+        let bestDiagScore = 0;
+        let bestDiagScoreName = null;
 
         if (!enrollingUsers.has(userId) && !isGuildActive(guildId)) {
             getDetectorForUser(userId)
@@ -82,6 +84,8 @@ function setupReceiver(connection, guildId, client) {
                     if (entry) {
                         entry.rustpotter.reset();
                         entry.residual = new Int16Array(0);
+                        entry.diag.rustpotter.reset();
+                        entry.diag.residual = new Int16Array(0);
                         detectorEntry = entry;
                     }
                 })
@@ -144,7 +148,7 @@ function setupReceiver(connection, guildId, client) {
                 const dynamicThreshold = isBotPlaying ? baseThreshold * 3 : baseThreshold;
                 if (rms > dynamicThreshold) {
                     if (interruptTTS(guildId)) {
-                        console.log(
+                        console.debug(
                             `[VAD] Loud voice detected (${Math.round(rms)}), interrupting TTS (Threshold: ${dynamicThreshold})`,
                         );
                         hasInterrupted = true;
@@ -157,6 +161,11 @@ function setupReceiver(connection, guildId, client) {
                 if (detection && detection.getScore() > bestWakeScore) {
                     bestWakeScore = detection.getScore();
                     bestWakeScoreName = detection.getName();
+                }
+                const diagDetection = feedPCMToDetector(detectorEntry.diag, chunk);
+                if (diagDetection && diagDetection.getScore() > bestDiagScore) {
+                    bestDiagScore = diagDetection.getScore();
+                    bestDiagScoreName = diagDetection.getName();
                 }
             }
 
@@ -210,8 +219,22 @@ function setupReceiver(connection, guildId, client) {
                     bestWakeScore = paddingDetection.getScore();
                     bestWakeScoreName = paddingDetection.getName();
                 }
+                const diagPaddingBuffer = Buffer.alloc(
+                    detectorEntry.diag.samplesPerFrame * 100 * 2,
+                );
+                const diagPaddingDetection = feedPCMToDetector(
+                    detectorEntry.diag,
+                    diagPaddingBuffer,
+                );
+                if (diagPaddingDetection && diagPaddingDetection.getScore() > bestDiagScore) {
+                    bestDiagScore = diagPaddingDetection.getScore();
+                    bestDiagScoreName = diagPaddingDetection.getName();
+                }
+
+                // rustpotter only emits a detection once its own per-user threshold is met, so any
+                // score reaching here is already a pass; the number below is for the log line only.
                 const threshold = wakeThresholdFor(userId);
-                wakeConfirmed = bestWakeScoreName !== null && bestWakeScore >= threshold;
+                wakeConfirmed = bestWakeScoreName !== null;
                 matchedWakeWord = wakeConfirmed ? bestWakeScoreName : null;
                 if (wakeConfirmed) {
                     console.log(
@@ -220,8 +243,9 @@ function setupReceiver(connection, guildId, client) {
                     );
                 } else {
                     console.debug(
-                        `[Wake] ${userId}: no match (best score ${bestWakeScore.toFixed(3)} for ` +
-                            `"${bestWakeScoreName ?? 'n/a'}", threshold ${threshold})`,
+                        `[Wake] ${userId}: no match (threshold ${threshold}; diagnostic-only ` +
+                            `closeness ${bestDiagScore.toFixed(3)} for "${bestDiagScoreName ?? 'n/a'}" - ` +
+                            `different scoring config, not directly comparable to the threshold)`,
                     );
                 }
             }
