@@ -3,7 +3,7 @@ const { joinVoiceChannel, VoiceConnectionStatus } = require('@discordjs/voice');
 const state = require('./state');
 const { setupReceiver } = require('./receiver');
 const { interruptTTS, playNextInQueue } = require('./tts');
-const { loadRustpotterModule, DETECTION_FLOOR, wakeThresholdFor } = require('./wakeword');
+const { loadRustpotterModule } = require('./wakeword');
 
 function registerRoutes(app, client) {
     app.get('/health', (req, res) => {
@@ -113,8 +113,11 @@ function registerRoutes(app, client) {
         if (!user_id || typeof threshold !== 'number') {
             return res.status(400).json({ error: 'user_id and numeric threshold required' });
         }
-        state.wakeThresholds.set(user_id, Math.max(DETECTION_FLOOR, threshold));
-        console.log(`[Wake] Threshold for ${user_id} set to ${wakeThresholdFor(user_id)}`);
+        state.wakeThresholds.set(user_id, threshold);
+        // The threshold is baked into the rustpotter config at build time, so the cached detector
+        // has to go with it - otherwise the new value only takes effect after some unrelated reset.
+        state.detectorCache.delete(user_id);
+        console.log(`[Wake] Threshold for ${user_id} set to ${threshold}`);
         res.json({ success: true });
     });
 

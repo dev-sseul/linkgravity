@@ -17,13 +17,12 @@ process.on('uncaughtException', (err) => {
 });
 
 const { registerRoutes } = require('./routes');
-const { DETECTION_FLOOR } = require('./wakeword');
 
 for (const [userId, value] of Object.entries(aglConfig.voice_thresholds || {})) {
     state.vadThresholds.set(userId, parseInt(value));
 }
 for (const [userId, value] of Object.entries(aglConfig.wake_thresholds || {})) {
-    state.wakeThresholds.set(userId, Math.max(DETECTION_FLOOR, parseFloat(value)));
+    state.wakeThresholds.set(userId, parseFloat(value));
 }
 
 const app = express();
