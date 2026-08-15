@@ -6,16 +6,11 @@ import uuid
 
 from aiohttp import web
 
+from api.server import is_tool_allowed
 from config import APPROVAL_TIMEOUT_SEC, MAX_EMBED_LEN, logger, session_manager
 from messengers.base import ScopeOption
 from messengers.registry import get_adapter_for_platform, get_adapter_for_thread
 from utils.utils import split_message
-
-
-def is_tool_allowed(tool_name, tool_input):
-    from api.server import is_tool_allowed as is_tool_allowed_orig
-
-    return is_tool_allowed_orig(tool_name, tool_input)
 
 
 async def send_ordered(target_thread_id, send_coro_factory):

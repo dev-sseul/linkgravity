@@ -22,7 +22,3 @@ def set_status(platform: str, status: str, detail: str = "") -> None:
         "at": datetime.now().isoformat(),
     }
     atomic_write_json(path, data)
-
-
-def get_all() -> dict:
-    return safe_load_json(_path(), {})

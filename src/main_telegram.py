@@ -1,6 +1,3 @@
-"""Telegram bot setup. Runs in the same process as Discord (see main.py),
-which starts both concurrently when both platforms are enabled."""
-
 import asyncio
 import uuid
 from datetime import datetime

@@ -1,7 +1,6 @@
-"""Per-platform messenger adapter registry, populated once at startup by
-main.py. Both bots now share one process, so callers must say which
-platform they mean - either directly (voice/Discord-only code) or by
-looking up which platform a given thread_id/conversation belongs to."""
+"""Per-platform messenger adapter registry, populated once at startup by main.py. All platforms
+share one process, so callers must say which platform they mean - either directly (voice/
+Discord-only code) or by looking up which platform a thread_id belongs to."""
 
 from messengers.base import MessengerAdapter
 
@@ -24,12 +23,3 @@ def get_adapter_for_thread(thread_id: str) -> MessengerAdapter:
     session = session_manager.get_session(thread_id) or {}
     platform = session.get("platform", "discord")  # pre-multi-platform sessions have no tag - assume discord
     return get_adapter_for_platform(platform)
-
-
-def get_adapter_for_conv_id(conv_id: str) -> MessengerAdapter | None:
-    from config import session_manager
-
-    for _thread_id, sess in session_manager.get_all_sessions().items():
-        if sess.get("conversation_id") == conv_id:
-            return get_adapter_for_platform(sess.get("platform", "discord"))
-    return None

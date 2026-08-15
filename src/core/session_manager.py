@@ -7,8 +7,6 @@ from core.atomic_io import atomic_write_json, safe_load_json
 
 
 class SessionManager:
-    """Manages conversation state, async streaming queues, and user approval states."""
-
     def __init__(self, data_dir: Path):
         self.session_file = data_dir / "sessions.json"
         self.persistent_file = data_dir / "persistent_tools.json"
@@ -119,9 +117,6 @@ class SessionManager:
         self.pending_approval_types[approval_key] = app_type
         if conv_id:
             self.active_approval_by_conv[conv_id] = approval_key
-
-    def get_pending_approval(self, approval_key: str) -> asyncio.Future | None:
-        return self.pending_approvals.get(approval_key)
 
     def get_pending_approval_by_conv(self, conv_id: str) -> asyncio.Future | None:
         """Looks up whichever approval is CURRENTLY active for a given

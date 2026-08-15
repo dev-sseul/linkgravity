@@ -57,9 +57,6 @@ def format_tool_display(tool_name: str, tool_input: dict) -> tuple[str, str, dic
 
 
 def format_bash_display(sub_cmd: str) -> tuple[str, str, dict]:
-    """
-    Formats a single bash sub-command for display.
-    """
     is_long = "\n" in sub_cmd or len(sub_cmd) > 50
     display_cmd = sub_cmd.split("\n")[0][:50] + "..." if is_long else sub_cmd
     tool_msg_text = f"● Bash({display_cmd})"

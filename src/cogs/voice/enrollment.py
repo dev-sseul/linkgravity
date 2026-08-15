@@ -91,8 +91,6 @@ class SampleConfirmView(discord.ui.View):
 
 
 class EnrollmentManager:
-    """Owns /sound's recording flow - see _commit_enrollment."""
-
     def __init__(self, bot, voice_state: dict, play_audio, bot_settings: dict, save_bot_settings, logger):
         self.bot = bot
         self._voice_state = voice_state  # shared with VoiceCog
@@ -109,11 +107,7 @@ class EnrollmentManager:
     def stop(self):
         self.cleanup_stale_enrollments.cancel()
 
-    def is_enrolling(self, user_id: str) -> bool:
-        return user_id in self._enrollment
-
     async def handle_voice_service_down(self):
-        """Called when Node dies."""
         stale_user_ids = list(self._enrollment.keys())
         for uid in stale_user_ids:
             session = self._enrollment.pop(uid, None)
@@ -181,7 +175,6 @@ class EnrollmentManager:
             self.logger.warning(f"Failed to send enrollment status message: {e}")
 
     async def start_wake_word_recording(self, interaction: discord.Interaction, word: str) -> bool:
-        """Called by /sound's wake_word param."""
         guild_id = interaction.guild_id
         user_id = str(interaction.user.id)
 
@@ -241,7 +234,6 @@ class EnrollmentManager:
         return True
 
     async def handle_enroll_sample(self, user_id: str, audio_bytes: bytes):
-        """Called via /enroll_sample for each captured sample."""
         session = self._enrollment.get(user_id)
         if not session:
             return  # stray sample - recording already finished/cancelled/expired

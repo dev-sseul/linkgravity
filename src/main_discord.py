@@ -1,6 +1,3 @@
-"""Discord bot setup. Runs in the same process as Telegram (see main.py),
-which starts both concurrently when both platforms are enabled."""
-
 import asyncio
 import atexit
 import os

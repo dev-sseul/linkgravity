@@ -19,13 +19,11 @@ class SttSessionTracker:
         self._partial_msg = {}
 
     def is_active(self, guild_id: str) -> bool:
-        """Whether the "stay awake" window is still open for this guild."""
         active_duration = self.bot_settings.get("active_timer", 60)
         last_active = self._last_active_time.get(str(guild_id), 0)
         return (time.time() - last_active) < active_duration
 
     def mark_tts_finished(self, guild_id: str):
-        """Called via /tts_finished once the spoken reply finishes playing."""
         self.extend_active_window(str(guild_id))
 
     def extend_active_window(self, guild_id: str):

@@ -1,6 +1,3 @@
-"""Slack bot setup. Runs in the same process as Discord/Telegram (see
-main.py), which starts all enabled platforms concurrently."""
-
 import asyncio
 import re
 import uuid

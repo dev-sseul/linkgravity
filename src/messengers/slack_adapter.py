@@ -46,8 +46,8 @@ def decode_conversation_id(conversation_id: str) -> tuple[str, str] | None:
 
 def latest_channel_session(channel: str) -> tuple[str, dict] | None:
     """Most recently created Slack session in a channel - used as a fallback for un-threaded
-    messages (users rarely bother clicking "Reply in thread") and for /model, /credit, which
-    can't target a specific thread since Slack slash commands can't be invoked inside one."""
+    messages (users rarely bother clicking "Reply in thread") and for /model, which can't target
+    a specific thread since Slack slash commands can't be invoked inside one."""
     candidates = [
         (cid, s)
         for cid, s in session_manager.get_all_sessions().items()
@@ -59,8 +59,6 @@ def latest_channel_session(channel: str) -> tuple[str, dict] | None:
 
 
 class SlackConversationRef:
-    """conversation_ref for Slack - a channel + the thread_ts all replies go under."""
-
     __slots__ = ("channel", "thread_ts")
 
     def __init__(self, channel: str, thread_ts: str):
@@ -77,8 +75,6 @@ class SlackConversationRef:
 
 
 class SlackMessageRef:
-    """message_ref for edit_message - a specific message within a channel."""
-
     __slots__ = ("channel", "ts")
 
     def __init__(self, channel: str, ts: str):

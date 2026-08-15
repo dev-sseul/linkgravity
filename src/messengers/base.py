@@ -1,6 +1,4 @@
-"""Core messenger interface. Every backend (Discord now, Slack/Telegram
-later) implements MessengerAdapter; business logic never touches
-platform SDK types directly.
+"""Core messenger interface. Business logic never touches platform SDK types directly.
 
 Futures for approval/question prompts are owned by business logic, not
 the adapter - the same future can also be resolved by a typed reply,
@@ -17,7 +15,7 @@ from typing import Any
 
 @dataclass
 class IncomingAttachment:
-    """A file on an inbound message; reader defers fetching bytes until needed."""
+    """reader defers fetching bytes until the attachment is actually read."""
 
     filename: str
     content_type: str | None
@@ -143,10 +141,6 @@ class MessengerAdapter(ABC):
         allow_write_in: bool = True,
     ) -> PromptHandle:
         raise NotImplementedError
-
-    @property
-    def supports_voice(self) -> bool:
-        return isinstance(self, VoiceCapable)
 
 
 class VoiceCapable(ABC):
