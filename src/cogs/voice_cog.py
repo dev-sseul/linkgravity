@@ -1,5 +1,6 @@
 import asyncio
 import math
+import re
 import time
 
 import aiohttp
@@ -9,6 +10,7 @@ from discord.ext import commands, tasks
 
 from config import allowed, logger
 from messengers.registry import get_adapter_for_platform
+from services.audio_service import LANGUAGES, TTS_VOICES, default_voice_for, resolve_language
 
 from .voice.enrollment import EnrollmentManager
 from .voice.stt_session import SttSessionTracker
@@ -34,7 +36,6 @@ class VoiceCog(commands.Cog):
     def __init__(
         self,
         bot,
-        stt,
         tts,
         send_agy_response,
         agy_send,
@@ -46,8 +47,6 @@ class VoiceCog(commands.Cog):
         logger,
     ):
         self.bot = bot
-        # Unused by the voice pipeline now (STT moved to Node); kept for other callers.
-        self.stt = stt
         self.tts = tts
         self.send_agy_response = send_agy_response
         self.agy_send = agy_send
@@ -140,37 +139,36 @@ class VoiceCog(commands.Cog):
                 opts.append(app_commands.Choice(name=str(v), value=v))
         return opts
 
+    async def language_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        current_val = resolve_language()
+        query = _autocomplete_query(current).lower()
+
+        choices = []
+        if query in current_val.lower() or not query:
+            choices.append(app_commands.Choice(name=f"{current_val} (current)", value=current_val))
+        for opt in LANGUAGES:
+            if query in opt.lower() and opt != current_val and len(choices) < 25:
+                choices.append(app_commands.Choice(name=opt, value=opt))
+        return choices
+
     async def tts_voice_autocomplete(
         self, interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
-        current_val = self.bot_settings.get("tts_voice", "en-US-AriaNeural")
-        options = [
-            "en-US-AriaNeural",
-            "en-US-GuyNeural",
-            "en-US-AnaNeural",
-            "en-US-ChristopherNeural",
-            "en-US-EricNeural",
-            "en-US-MichelleNeural",
-            "en-US-RogerNeural",
-            "en-GB-SoniaNeural",
-            "en-GB-RyanNeural",
-            "en-AU-NatashaNeural",
-            "en-AU-WilliamNeural",
-            "ko-KR-SunHiNeural",
-            "ko-KR-InJoonNeural",
-            "ja-JP-NanamiNeural",
-            "ja-JP-KeitaNeural",
-            "fr-FR-DeniseNeural",
-            "de-DE-KatjaNeural",
-            "es-ES-ElviraNeural",
-        ]
+        # Only same-language voices - a voice from another language would read the reply
+        # with that language's pronunciation.
+        language = resolve_language()
+        current_val = self.bot_settings.get("tts_voice") or default_voice_for(language)
+        query = _autocomplete_query(current).lower()
 
         choices = []
-        if current.lower() in current_val.lower() or not current:
+        if query in current_val.lower() or not query:
             choices.append(app_commands.Choice(name=f"{current_val} (current)", value=current_val))
-
-        for opt in options:
-            if current.lower() in opt.lower() and opt != current_val and len(choices) < 25:
+        for opt in TTS_VOICES:
+            if not opt.startswith(f"{language}-") or opt == current_val:
+                continue
+            if query in opt.lower() and len(choices) < 25:
                 choices.append(app_commands.Choice(name=opt, value=opt))
         return choices
 
@@ -325,7 +323,8 @@ class VoiceCog(commands.Cog):
         active_times="Duration in seconds the bot stays awake",
         interrupt_threshold="Mic volume that interrupts (barges into) TTS playback (1000~10000)",
         wake_sensitivity="Wake word match sensitivity (0.1~0.9, lower = easier to trigger but more false wakes)",
-        tts_voice="Select the AI TTS voice",
+        language="Language I listen and speak in (BCP-47, e.g. en-US)",
+        tts_voice="Pick a different voice within that language",
         tts_enabled="Turn Text-to-Speech ON or OFF",
         tts_speed="TTS playback speed multiplier, e.g. 1.3 for 1.3x (0.5~2.0)",
         require_wake_word="Require your wake word before I listen (default ON) - turn OFF if you use push-to-talk",
@@ -334,6 +333,7 @@ class VoiceCog(commands.Cog):
         active_times=active_times_autocomplete,
         interrupt_threshold=interrupt_threshold_autocomplete,
         wake_sensitivity=wake_sensitivity_autocomplete,
+        language=language_autocomplete,
         tts_voice=tts_voice_autocomplete,
         tts_enabled=tts_enabled_autocomplete,
         tts_speed=tts_speed_autocomplete,
@@ -346,6 +346,7 @@ class VoiceCog(commands.Cog):
         active_times: int = None,
         interrupt_threshold: int = None,
         wake_sensitivity: float = None,
+        language: str = None,
         tts_voice: str = None,
         tts_enabled: str = None,
         tts_speed: float = None,
@@ -362,6 +363,7 @@ class VoiceCog(commands.Cog):
             and active_times is None
             and interrupt_threshold is None
             and wake_sensitivity is None
+            and language is None
             and tts_voice is None
             and tts_enabled is None
             and tts_speed is None
@@ -371,7 +373,8 @@ class VoiceCog(commands.Cog):
             curr_timer = self.bot_settings.get("active_timer", 60)
             curr_interrupt_thresh = self._vad_threshold(interaction.user.id)
             curr_wake_sens = self._wake_threshold(interaction.user.id)
-            curr_tts = self.bot_settings.get("tts_voice", "en-US-AriaNeural")
+            curr_lang = resolve_language()
+            curr_tts = self.bot_settings.get("tts_voice") or default_voice_for(curr_lang)
             curr_tts_on = "ON" if self.bot_settings.get("tts_enabled", True) else "OFF"
             curr_tts_speed = self.bot_settings.get("tts_speed", 1.0)
             curr_required = self._wake_word_required(interaction.user.id)
@@ -382,6 +385,7 @@ class VoiceCog(commands.Cog):
             embed.add_field(name="⏱️ Active Time", value=f"`{curr_timer}s`", inline=False)
             embed.add_field(name="🎯 Wake Sensitivity", value=f"`{curr_wake_sens}`", inline=False)
             embed.add_field(name="🔊 Interrupt Threshold", value=f"`{curr_interrupt_thresh}`", inline=False)
+            embed.add_field(name="🌐 Language", value=f"`{curr_lang}`", inline=False)
             embed.add_field(name="🗣️ TTS Voice", value=f"`{curr_tts}`", inline=False)
             embed.add_field(name="🔊 TTS Enabled", value=f"`{curr_tts_on}`", inline=False)
             embed.add_field(name="⏩ TTS Speed", value=f"`{curr_tts_speed}x`", inline=False)
@@ -420,6 +424,13 @@ class VoiceCog(commands.Cog):
             except (aiohttp.ClientError, asyncio.TimeoutError) as e:
                 self.logger.warning(f"Node.js wake-threshold sync failed for {interaction.user.id}: {e}")
                 updated.append(f"(⚠️ Node.js Sync Failed: {e})")
+        if language is not None:
+            self.bot_settings["language"] = language
+            self.bot_settings["tts_voice"] = default_voice_for(language)
+            updated.append(
+                f"🌐 Language: `{language}` (voice set to `{self.bot_settings['tts_voice']}`; "
+                "run `lgy restart` to apply it to speech recognition)"
+            )
         if tts_voice is not None:
             self.bot_settings["tts_voice"] = tts_voice
             updated.append(f"🗣️ TTS Voice: `{tts_voice}`")
@@ -532,7 +543,6 @@ class VoiceCog(commands.Cog):
                 return
 
             import difflib
-            import re
 
             # Wake detection is Node's Rustpotter detector's job - no text-similarity fallback.
             is_waking_up = bool(data.get("wake_confirmed"))

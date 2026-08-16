@@ -1,3 +1,6 @@
+"""Discord bot setup. Runs in the same process as Telegram (see main.py),
+which starts both concurrently when both platforms are enabled."""
+
 import asyncio
 import atexit
 import os
@@ -14,7 +17,7 @@ from messengers.discord_adapter import DiscordAdapter
 from messengers.registry import register_adapter
 from services.response import send_agy_response
 from services.streaming import stream_thinking_latest
-from utils.utils import agy_new_conversation, agy_send_message, stt, tts
+from utils.utils import agy_new_conversation, agy_send_message, tts
 
 voice_process = None
 _voice_shutting_down = False
@@ -287,7 +290,6 @@ async def run_discord(stop_event: asyncio.Event) -> None:
         await bot.add_cog(
             VoiceCog(
                 bot=bot,
-                stt=stt,
                 tts=tts,
                 send_agy_response=send_agy_response,
                 agy_send=agy_send_message,

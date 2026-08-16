@@ -1,8 +1,19 @@
 const { spawn } = require('child_process');
 const ffmpegPath = require('ffmpeg-static');
+const { aglConfig } = require('./config');
 
 // Unofficial Google STT key - same default Python's SpeechRecognition (recognize_google) ships with.
 const GOOGLE_STT_KEY = 'AIzaSyBOti4mM-6x9WDnZIjIeyEU21OpBXqWBgw';
+
+// Mirrored by resolve_language() in src/services/audio_service.py. edge-tts voice names are
+// <lang>-<REGION>-<Name>, so a pre-1.6 config carries its language in tts_voice alone.
+function resolveLanguage() {
+    if (aglConfig.language) return aglConfig.language;
+    const match = /^([a-z]{2}-[A-Z]{2})-/.exec(aglConfig.tts_voice || '');
+    return match ? match[1] : 'en-US';
+}
+
+const LANGUAGE = resolveLanguage();
 
 function flacEncode(wavBuffer) {
     return new Promise((resolve, reject) => {
@@ -29,7 +40,7 @@ function flacEncode(wavBuffer) {
     });
 }
 
-async function googleSTT(wavBuffer, lang = 'ko-KR') {
+async function googleSTT(wavBuffer, lang = LANGUAGE) {
     let flacBuffer;
     try {
         flacBuffer = await flacEncode(wavBuffer);
@@ -54,6 +65,7 @@ async function googleSTT(wavBuffer, lang = 'ko-KR') {
     }
 
     const raw = await res.text();
+    console.debug('[STT] raw:', raw.trim().replace(/\n/g, ' | '));
     // Response is newline-delimited JSON, one object per line.
     for (const line of raw.trim().split('\n')) {
         if (!line) continue;

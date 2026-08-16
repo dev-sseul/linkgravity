@@ -31,6 +31,9 @@ DEFAULT_LGY_CONFIG = {
     "voice_thresholds": {},
     "active_timer": 60,
     "tts_voice": "ko-KR-SunHiNeural",
+    # BCP-47 tag driving both speech recognition and the TTS voice.
+    # Empty means derive it from tts_voice, which is how pre-1.6 configs carry their language.
+    "language": "",
     "tts_enabled": True,
     # Sticky default for /new sessions, set whenever /model succeeds.
     "default_model": "",
