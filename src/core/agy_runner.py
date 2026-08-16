@@ -339,13 +339,18 @@ async def run_agy(
         _intentionally_stopped.discard(thread_id)
 
 
+def clean_model_name(model: str) -> str:
+    # agy models prints "<id>\t<display name>" but --model only accepts the display name.
+    return model.split("\t")[-1].strip()
+
+
 async def agy_new_conversation(
     content: str, model: str = None, stream_queue: asyncio.Queue = None, thread_id: str = None, cwd: str = None
 ) -> tuple[str, str]:
     # --print consumes the next token as the prompt, so the flag must come first.
     args = ["--dangerously-skip-permissions", "--print", content]
     if model:
-        args.extend(["--model", model])
+        args.extend(["--model", clean_model_name(model)])
     result_text = await run_agy(*args, stream_queue=stream_queue, thread_id=thread_id, cwd=cwd)
     conv_id = await _get_latest_conversation_id()
     return result_text, conv_id
@@ -361,7 +366,7 @@ async def agy_send_message(
 ) -> str:
     args = ["--dangerously-skip-permissions", "--print", content, "--conversation", conv_id]
     if model:
-        args.extend(["--model", model])
+        args.extend(["--model", clean_model_name(model)])
     return await run_agy(*args, stream_queue=stream_queue, thread_id=thread_id, cwd=cwd)
 
 

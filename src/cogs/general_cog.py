@@ -18,6 +18,7 @@ from config import (
     save_bot_settings,
     session_manager,
 )
+from core.agy_runner import clean_model_name
 from core.atomic_io import atomic_write_json, safe_load_json
 from utils.utils import get_default_cwd
 
@@ -35,7 +36,8 @@ def load_cached_models():
         "Claude Opus 4.6 (Thinking)",
         "GPT-OSS 120B (Medium)",
     ]
-    return safe_load_json(MODELS_CACHE_FILE, default_models, logger=logger)
+    cached = safe_load_json(MODELS_CACHE_FILE, default_models, logger=logger)
+    return [clean_model_name(m) for m in cached]
 
 
 cached_models = load_cached_models()
@@ -79,7 +81,7 @@ async def fetch_models_background():
             line = line.strip()
             line = re.sub(r"[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]", "", line).strip()
             if line and "Fetching available models" not in line:
-                models.append(line)
+                models.append(clean_model_name(line))
 
         if models:
             cached_models = models
