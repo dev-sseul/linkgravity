@@ -1,6 +1,8 @@
 import json
 import os
 
+from approval.diff_preview import build_diff
+
 TOOL_DISPLAY_NAMES = {
     "view_file": "Read",
     "write_to_file": "Write",
@@ -39,14 +41,17 @@ def format_tool_display(tool_name: str, tool_input: dict) -> tuple[str, str, dic
             fields_text += f"**{k}**: {v}\n"
 
     code_text = ""
-    if "CodeContent" in tool_input:
-        code_text = f"\n**Code Content:**\n```python\n{tool_input['CodeContent'][:1000]}\n```"
+    diff = build_diff(tool_input)
+    if diff:
+        code_text = f"\n**Changes:**\n```diff\n{diff}\n```"
+    elif "CodeContent" in tool_input:
+        code_text = f"\n**Code Content:**\n```\n{tool_input['CodeContent'][:1000]}\n```"
     elif "ReplacementChunks" in tool_input:
         for i, chunk in enumerate(tool_input["ReplacementChunks"]):
             code_text += f"\n**Replacement Chunk #{i + 1} (Lines {chunk.get('StartLine')}-{chunk.get('EndLine')}):**\n"
-            code_text += f"```python\n{chunk.get('ReplacementContent')[:500]}\n```"
+            code_text += f"```\n{chunk.get('ReplacementContent')[:500]}\n```"
     elif "ReplacementContent" in tool_input:
-        code_text += f"\n**Replacement Content:**\n```python\n{tool_input['ReplacementContent'][:1000]}\n```"
+        code_text += f"\n**Replacement Content:**\n```\n{tool_input['ReplacementContent'][:1000]}\n```"
 
     if fields_text or code_text:
         desc_json = f"\n{fields_text}{code_text}"
