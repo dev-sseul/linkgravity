@@ -290,12 +290,13 @@ class VoiceCog(commands.Cog):
 
                     if own_word or not required:
                         if self.bot_settings.get("tts_enabled", True):
-                            welcome_audio = await self.tts("Voice connected.")
+                            welcome_audio = await self.tts("Voice connected.", cache=True)
                             if welcome_audio:
                                 await self._play_audio(str(guild_id), welcome_audio, suppress_active_window=True)
                     elif self.bot_settings.get("tts_enabled", True):
                         prompt_audio = await self.tts(
-                            "No wake word is set up yet. Please use the sound command to set one."
+                            "No wake word is set up yet. Please use the sound command to set one.",
+                            cache=True,
                         )
                         if prompt_audio:
                             await self._play_audio(str(guild_id), prompt_audio, suppress_active_window=True)
@@ -637,7 +638,7 @@ class VoiceCog(commands.Cog):
             if not text_to_ai:
                 self.logger.debug("STT: isolated wake word handled via direct TTS")
                 if self.bot_settings.get("tts_enabled", True):
-                    audio_reply = await self.tts("Yes, I am listening.")
+                    audio_reply = await self.tts("Yes, I am listening.", cache=True)
                     if audio_reply:
                         await self._play_audio(str(guild_id), audio_reply)
                 return

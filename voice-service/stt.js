@@ -5,8 +5,8 @@ const { aglConfig } = require('./config');
 // Unofficial Google STT key - same default Python's SpeechRecognition (recognize_google) ships with.
 const GOOGLE_STT_KEY = 'AIzaSyBOti4mM-6x9WDnZIjIeyEU21OpBXqWBgw';
 
-// Mirrored by resolve_language() in src/services/audio_service.py. edge-tts voice names are
-// <lang>-<REGION>-<Name>, so a pre-1.6 config carries its language in tts_voice alone.
+// edge-tts voice names are <lang>-<REGION>-<Name>, so a config predating the language setting
+// carries its language in tts_voice alone.
 function resolveLanguage() {
     if (aglConfig.language) return aglConfig.language;
     const match = /^([a-z]{2}-[A-Z]{2})-/.exec(aglConfig.tts_voice || '');
@@ -41,6 +41,7 @@ function flacEncode(wavBuffer) {
 }
 
 async function googleSTT(wavBuffer, lang = LANGUAGE) {
+    const startedAt = Date.now();
     let flacBuffer;
     try {
         flacBuffer = await flacEncode(wavBuffer);
@@ -48,6 +49,8 @@ async function googleSTT(wavBuffer, lang = LANGUAGE) {
         console.error('[STT] FLAC encode failed:', err.message);
         return null;
     }
+
+    const encodedAt = Date.now();
 
     let res;
     try {
@@ -65,6 +68,10 @@ async function googleSTT(wavBuffer, lang = LANGUAGE) {
     }
 
     const raw = await res.text();
+    console.debug(
+        `[STT] ${Math.round(wavBuffer.length / 192)}ms audio: flac ${encodedAt - startedAt}ms, ` +
+            `google ${Date.now() - encodedAt}ms`,
+    );
     console.debug('[STT] raw:', raw.trim().replace(/\n/g, ' | '));
     // Response is newline-delimited JSON, one object per line.
     for (const line of raw.trim().split('\n')) {

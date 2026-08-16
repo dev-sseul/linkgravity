@@ -7,7 +7,6 @@ from pathlib import Path
 from config import TTS_VOICE, bot_settings, logger
 
 # Verified against edge-tts's live voice list; a name that isn't in it fails at synthesis time.
-# Ordered - the first voice of a language is that language's default.
 TTS_VOICES = [
     "en-US-AriaNeural",
     "en-US-GuyNeural",
@@ -83,7 +82,6 @@ def default_voice_for(tag: str) -> str:
 
 
 def resolve_language() -> str:
-    # Mirrored by resolveLanguage() in voice-service/stt.js, which is what reaches Google.
     configured = bot_settings.get("language")
     if configured:
         return configured
@@ -101,7 +99,12 @@ def voice_for(text: str) -> str:
     return default_voice_for(script)
 
 
-async def tts(text: str, voice: str = None) -> bytes | None:
+# Synthesising a prompt costs a network round trip that lands directly in the wake-word
+# response time, so the fixed ones are kept rather than rebuilt.
+_fixed_phrase_cache: dict[tuple[str, str, str], bytes] = {}
+
+
+async def tts(text: str, voice: str = None, cache: bool = False) -> bytes | None:
     try:
         import edge_tts
 
@@ -115,12 +118,20 @@ async def tts(text: str, voice: str = None) -> bytes | None:
         pct = round((speed - 1.0) * 100)
         rate = f"{'+' if pct >= 0 else ''}{pct}%"
 
-        communicate = edge_tts.Communicate(clean, voice or voice_for(clean), rate=rate)
+        active_voice = voice or voice_for(clean)
+
+        key = (clean, active_voice, rate)
+        if cache and key in _fixed_phrase_cache:
+            return _fixed_phrase_cache[key]
+
+        communicate = edge_tts.Communicate(clean, active_voice, rate=rate)
         with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
             tmp = f.name
         await communicate.save(tmp)
         data = Path(tmp).read_bytes()
         os.unlink(tmp)
+        if cache:
+            _fixed_phrase_cache[key] = data
         return data
     except Exception as e:
         logger.exception(f"TTS error: {e}")
