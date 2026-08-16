@@ -165,8 +165,10 @@ session_manager = SessionManager(DATA_DIR)
 
 def allowed(user_id, platform: str = "discord") -> bool:
     if platform == "telegram":
-        ids = TELEGRAM_ALLOWED_IDS
-    elif platform == "slack":
+        # Anyone who knows a Telegram bot's username can DM it, and there is no channel scope to
+        # fall back on, so an empty list must mean nobody rather than everyone.
+        return user_id in TELEGRAM_ALLOWED_IDS
+    if platform == "slack":
         ids = SLACK_ALLOWED_IDS
         user_id = str(user_id)  # Slack IDs are strings, not ints like Discord/Telegram
     else:

@@ -112,13 +112,16 @@ async function collectSessionScopes(existingScopes) {
     return scopes;
 }
 
-async function collectUserIds(existingIds, platformLabel) {
+async function collectUserIds(existingIds, platformLabel, required = false) {
     const ids = [];
     const hasExisting = existingIds && existingIds.length > 0;
 
     p.note(
-        'ONLY these users can use the bot (leave completely empty to allow EVERYONE). ' +
-            'Not related to DMs - this only gates the channel/threads configured above.',
+        required
+            ? 'ONLY these users can use the bot. At least one is required - anyone who knows the ' +
+                  'bot username can message it, and there is no channel scope to fall back on.'
+            : 'ONLY these users can use the bot (leave completely empty to allow EVERYONE). ' +
+                  'Not related to DMs - this only gates the channel/threads configured above.',
         `Allowed ${platformLabel} Users`,
     );
 
@@ -143,7 +146,9 @@ async function collectUserIds(existingIds, platformLabel) {
     while (true) {
         const userId = await p.text({
             message: isFirst
-                ? `${platformLabel} User ID to allow (leave empty to allow EVERYONE):`
+                ? required
+                    ? `${platformLabel} User ID to allow (required - message @userinfobot to find yours):`
+                    : `${platformLabel} User ID to allow (leave empty to allow EVERYONE):`
                 : `Another ${platformLabel} user ID to allow (leave empty if done):`,
         });
         if (p.isCancel(userId)) {
@@ -151,7 +156,13 @@ async function collectUserIds(existingIds, platformLabel) {
             process.exit(0);
         }
 
-        if (!userId) break;
+        if (!userId) {
+            if (required && isFirst) {
+                p.note(`At least one allowed user is required for ${platformLabel}.`, 'Required');
+                continue;
+            }
+            break;
+        }
         isFirst = false;
 
         ids.push(userId.trim());
@@ -334,7 +345,7 @@ async function configureTelegram(existingSettings) {
     const existingTelegramUserIds = existingSettings.telegram_allowed_user_ids
         ? splitIds(existingSettings.telegram_allowed_user_ids)
         : [];
-    const telegramUserIds = await collectUserIds(existingTelegramUserIds, 'Telegram');
+    const telegramUserIds = await collectUserIds(existingTelegramUserIds, 'Telegram', true);
 
     const updates = {};
     if (telegramToken) updates.telegram_token = telegramToken;

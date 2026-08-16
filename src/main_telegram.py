@@ -6,7 +6,15 @@ from pathlib import Path
 from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import Application, ApplicationBuilder, CallbackQueryHandler, CommandHandler, MessageHandler, filters
 
-from config import TELEGRAM_TOKEN, allowed, bot_settings, logger, save_bot_settings, session_manager
+from config import (
+    TELEGRAM_ALLOWED_IDS,
+    TELEGRAM_TOKEN,
+    allowed,
+    bot_settings,
+    logger,
+    save_bot_settings,
+    session_manager,
+)
 from core.atomic_io import atomic_write_json, safe_load_json
 from handlers.message_router import handle_message
 from messengers.registry import register_adapter
@@ -250,6 +258,14 @@ async def run_telegram(stop_event: asyncio.Event) -> None:
     with other asyncio frameworks."""
     if not TELEGRAM_TOKEN:
         logger.critical("Missing TELEGRAM_TOKEN - set telegram_token in lgy.json first.")
+        return
+
+    if not TELEGRAM_ALLOWED_IDS:
+        logger.critical(
+            "No telegram_allowed_user_ids configured - refusing to start. A Telegram bot is "
+            "reachable by anyone who knows its username, so run 'lgy setup' and register your "
+            "user ID (message @userinfobot to find it)."
+        )
         return
 
     app = build_application()
