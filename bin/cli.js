@@ -49,6 +49,9 @@ function runPm2(args, silent = true) {
             ...process.env,
             // pm2 gives Python a pipe not a TTY, so it block-buffers stdout and can sit on log lines indefinitely - force line buffering.
             PYTHONUNBUFFERED: '1',
+            // pm2 merges --update-env rather than replacing, so a LOG_LEVEL from an earlier run
+            // survives unless a value is passed every time.
+            LOG_LEVEL: process.env.LOG_LEVEL || 'INFO',
             // Version managers (fnm, nvm) put node on PATH from a shell hook the daemon never runs,
             // so the bot's own `node` lookup for voice-service would fail without this.
             PATH: `${path.dirname(process.execPath)}${path.delimiter}${process.env.PATH || ''}`,
@@ -106,7 +109,7 @@ function runSudoStepThen(sudoCommand, successMessage) {
     }
 }
 
-// Matches a leading timestamp from either loguru or aiohttp's access-log format; only strips the first bracket group so aiohttp's second "[INFO ]" bracket is left alone.
+// Matches a leading timestamp from either loguru or aiohttp's access-log format.
 const TIMESTAMP_PREFIX = /^\[?\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}\]?\s*/;
 // loguru's colorize=True puts an ANSI code before the timestamp digits, breaking the '^' anchor above.
 // eslint-disable-next-line no-control-regex
@@ -390,7 +393,15 @@ if (cmd === 'version' || cmd === '-v' || cmd === '--version') {
     }
 
     info('Starting LinkGravity daemon...');
-    runPm2(['start', LGY_SCRIPT_PATH, '--interpreter', pythonExe, '--name', LGY_PM2_NAME]);
+    runPm2([
+        'start',
+        LGY_SCRIPT_PATH,
+        '--interpreter',
+        pythonExe,
+        '--name',
+        LGY_PM2_NAME,
+        '--update-env',
+    ]);
     verifyStartup().then((ok) => process.exit(ok ? 0 : 1));
 } else if (cmd === 'stop') {
     info('Stopping LinkGravity daemon...');
@@ -616,7 +627,15 @@ if (cmd === 'version' || cmd === '-v' || cmd === '--version') {
 
     if (!procBeforeUpdate) {
         info("Daemon wasn't running - starting it fresh...");
-        runPm2(['start', LGY_SCRIPT_PATH, '--interpreter', pythonExe, '--name', LGY_PM2_NAME]);
+        runPm2([
+            'start',
+            LGY_SCRIPT_PATH,
+            '--interpreter',
+            pythonExe,
+            '--name',
+            LGY_PM2_NAME,
+            '--update-env',
+        ]);
         verifyStartup().then((ok) => process.exit(ok ? 0 : 1));
     } else if (wasOnline) {
         info('Restarting daemon to apply the update...');

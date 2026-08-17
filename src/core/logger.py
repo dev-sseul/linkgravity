@@ -6,6 +6,17 @@ from sys import stdout
 from loguru import logger
 
 
+class _InterceptHandler(logging.Handler):
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            level = logger.level(record.levelname).name
+        except ValueError:
+            level = record.levelno
+        # Without patching, {name} resolves to this file's frame instead of the library that logged.
+        patched = logger.patch(lambda r, name=record.name: r.update(name=name))
+        patched.opt(exception=record.exc_info).log(level, record.getMessage())
+
+
 def init_logger(workspace_dir: Path):
     logging.getLogger("discord").setLevel(logging.WARNING)
     # httpx is what python-telegram-bot uses under the hood for every getUpdates
@@ -22,6 +33,9 @@ def init_logger(workspace_dir: Path):
     # Defaults to INFO - set LOG_LEVEL=DEBUG then `lgy restart` for
     # verbose detail (e.g. agy_runner.py's raw agy stdout capture).
     level = os.environ.get("LOG_LEVEL", "INFO").upper()
+    # force=True drops handlers third-party libraries install for themselves, which otherwise
+    # print in their own format alongside loguru's.
+    logging.basicConfig(handlers=[_InterceptHandler()], level=getattr(logging, level, logging.INFO), force=True)
     logger.add(stdout, level=level, format=log_format, colorize=True)
     logger.add(
         LOG_DIR / "bot.log",

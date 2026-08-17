@@ -281,8 +281,6 @@ async def run_discord(stop_event: asyncio.Event) -> None:
         logger.critical("Missing DISCORD_TOKEN - run `lgy setup`")
         return
 
-    discord.utils.setup_logging()
-
     async with bot:
         from cogs.voice_cog import VoiceCog
         from config import bot_settings, save_bot_settings
