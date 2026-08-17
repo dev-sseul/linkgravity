@@ -12,7 +12,7 @@ from slack_bolt.app.async_app import AsyncApp
 from slack_sdk.errors import SlackApiError
 from slack_sdk.web.async_client import AsyncWebClient
 
-from config import logger, session_manager
+from config import allowed, logger, session_manager
 from messengers.base import (
     IncomingAttachment,
     IncomingMessage,
@@ -222,11 +222,27 @@ class SlackAdapter(MessengerAdapter):
         actions = body.get("actions") or []
         if not actions:
             return
+        if not await self._reject_unauthorized(body):
+            return
         action_id = actions[0].get("action_id")
         handler = self._callbacks.pop(action_id, None)
         if handler is None:
             return  # expired/unknown action - nothing to do, Bolt already acked
         await handler(body, self.client)
+
+    async def _reject_unauthorized(self, body: dict) -> bool:
+        user_id = (body.get("user") or {}).get("id")
+        if allowed(user_id, "slack"):
+            return True
+        channel = (body.get("channel") or {}).get("id")
+        if channel and user_id:
+            try:
+                await self.client.chat_postEphemeral(
+                    channel=channel, user=user_id, text="⛔ You are not allowed to use this bot."
+                )
+            except SlackApiError as e:
+                logger.warning(f"Failed to notify unauthorized Slack user {user_id}: {e}")
+        return False
 
     async def handle_view_submission(self, body: dict) -> None:
         callback_id = (body.get("view") or {}).get("callback_id")

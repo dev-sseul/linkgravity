@@ -7,7 +7,7 @@ from typing import Any
 
 import discord
 
-from config import logger
+from config import allowed, logger
 from messengers.base import (
     IncomingAttachment,
     IncomingMessage,
@@ -21,6 +21,14 @@ from messengers.base import (
 
 
 class _ErrorLoggingView(discord.ui.View):
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        # discord.py lets anyone who can see the message press the button, so the allow-list has
+        # to be applied here as well as on the inbound message path.
+        if allowed(interaction.user.id):
+            return True
+        await interaction.response.send_message("⛔ You are not allowed to use this bot.", ephemeral=True)
+        return False
+
     async def on_error(self, interaction: discord.Interaction, error: Exception, item) -> None:
         logger.exception(f"Discord button interaction error: {error}")
         error_msg = "⚠️ **An error occurred while processing this button.** Please try again later or check the logs."

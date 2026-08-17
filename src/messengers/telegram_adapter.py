@@ -14,7 +14,7 @@ from telegram.constants import ChatAction
 from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 
-from config import logger
+from config import allowed, logger
 from messengers.base import (
     IncomingAttachment,
     IncomingMessage,
@@ -161,6 +161,9 @@ class TelegramAdapter(MessengerAdapter):
     async def handle_callback_query(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         query = update.callback_query
         if query is None or query.data is None:
+            return
+        if query.from_user is None or not allowed(query.from_user.id, "telegram"):
+            await query.answer("You are not allowed to use this bot.", show_alert=True)
             return
         handler = self._callbacks.pop(query.data, None)
         if handler is None:
