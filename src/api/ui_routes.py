@@ -7,6 +7,7 @@ import uuid
 from aiohttp import web
 
 from api.server import is_tool_allowed
+from approval.protected_paths import protected_reason
 from config import APPROVAL_TIMEOUT_SEC, MAX_EMBED_LEN, logger, session_manager
 from messengers.base import ScopeOption
 from messengers.registry import get_adapter_for_platform, get_adapter_for_thread
@@ -86,6 +87,12 @@ async def handle_approve_request(request):
 
         # DEBUG-only (see logger.py's LOG_LEVEL). Silent by default.
         logger.debug(f"[APPROVE HOOK] tool_name={tool_name!r} conv_id={conv_id!r} tool_input={tool_input!r}")
+
+        # Ahead of the auto-allow lookup: this must not be overridable by a persistent grant.
+        blocked = protected_reason(tool_input)
+        if blocked:
+            logger.warning(f"Blocked {tool_name} touching protected config: {tool_input!r}")
+            return web.json_response({"decision": "deny", "reason": blocked})
 
         target_thread = None
         target_thread_id = None
