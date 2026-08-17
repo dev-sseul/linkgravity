@@ -234,6 +234,8 @@ class SlackAdapter(MessengerAdapter):
         user_id = (body.get("user") or {}).get("id")
         if allowed(user_id, "slack"):
             return True
+        logger.warning(f"Rejected Slack interaction from unauthorized user {user_id}")
+        # Modal submissions carry no channel, so there is nowhere to post the notice.
         channel = (body.get("channel") or {}).get("id")
         if channel and user_id:
             try:
@@ -245,6 +247,8 @@ class SlackAdapter(MessengerAdapter):
         return False
 
     async def handle_view_submission(self, body: dict) -> None:
+        if not await self._reject_unauthorized(body):
+            return
         callback_id = (body.get("view") or {}).get("callback_id")
         handler = self._view_callbacks.pop(callback_id, None)
         if handler is None:
