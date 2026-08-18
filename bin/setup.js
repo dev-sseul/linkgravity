@@ -494,6 +494,21 @@ async function runSetup() {
         await platformMenu(choice);
     }
 
+    const { installCompletion } = require('./completion');
+    const installed = installCompletion();
+    if (installed) {
+        p.note(
+            [
+                `Installed for ${installed.shell} at ${installed.file}.`,
+                installed.rc ? `Added a line to ${installed.rc}.` : null,
+                'Open a new shell to use it.',
+            ]
+                .filter(Boolean)
+                .join('\n'),
+            'Tab completion',
+        );
+    }
+
     p.outro('Setup complete.');
 }
 

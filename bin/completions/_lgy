@@ -1,0 +1,33 @@
+#compdef lgy linkgravity
+
+local -a commands
+commands=(
+    'version:Print the installed version'
+    'start:Start bot in the background'
+    'stop:Stop the background bot'
+    'restart:Restart the background bot'
+    'logs:View bot logs'
+    'status:Show daemon status'
+    'enable:Start automatically on system boot'
+    'disable:Remove bot from system boot'
+    'setup:Run the configuration wizard'
+    'update:Install a newer version if one exists'
+    'help:Show the help message'
+)
+
+if (( CURRENT == 2 )); then
+    _describe 'command' commands
+    return
+fi
+
+case "$words[2]" in
+    logs)
+        [[ "$words[CURRENT-1]" == (-n|--tail) ]] && return
+        _values 'flag' \
+            '-f[Follow the log output]' \
+            '-n[Number of lines to show]' \
+            '--tail[Number of lines to show]' \
+            '-t[Show timestamps]' \
+            '--timestamp[Show timestamps]'
+        ;;
+esac
