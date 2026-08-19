@@ -476,6 +476,8 @@ async function runSetup() {
             process.exit(0);
         }
         if (consent) registerHook({ allowFirstTimeCreate: true });
+    } else {
+        registerHook({ allowFirstTimeCreate: false, quiet: true });
     }
 
     while (true) {

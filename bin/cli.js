@@ -40,6 +40,22 @@ function info(msg) {
     console.log(`\n${color.cyan}▶${color.reset} ${msg}`);
 }
 
+// `fresh`: npm has swapped the package on disk since require time.
+function repairHookRegistration({ fresh = false } = {}) {
+    const modulePath = require.resolve('../npm-scripts/register-hook');
+    if (fresh) {
+        delete require.cache[modulePath];
+        delete require.cache[require.resolve('../npm-scripts/venv-paths')];
+    }
+    try {
+        require(modulePath)({ allowFirstTimeCreate: false, quiet: true });
+    } catch (err) {
+        console.log(
+            `${color.yellow}⚠${color.reset} Couldn't check the agy hook registration: ${err.message}`,
+        );
+    }
+}
+
 function runPm2(args, silent = true) {
     const stdioOpt = silent ? 'pipe' : 'inherit';
     const result = spawnSync(process.execPath, [PM2_BIN, ...args], {
@@ -392,6 +408,8 @@ if (cmd === 'version' || cmd === '-v' || cmd === '--version') {
         require('../npm-scripts/ensure-env').ensureEnvironment();
     }
 
+    repairHookRegistration();
+
     info('Starting LinkGravity daemon...');
     runPm2([
         'start',
@@ -602,6 +620,7 @@ if (cmd === 'version' || cmd === '-v' || cmd === '--version') {
     const latestVersion = viewResult.stdout.toString().trim();
 
     if (latestVersion === currentVersion) {
+        repairHookRegistration();
         success(`Already up to date (v${currentVersion}).\n`);
         process.exit(0);
     }
@@ -624,6 +643,7 @@ if (cmd === 'version' || cmd === '-v' || cmd === '--version') {
     // replaced this package on disk, and the copy required at startup is the pre-update one.
     delete require.cache[require.resolve('../npm-scripts/ensure-env')];
     require('../npm-scripts/ensure-env').ensureEnvironment();
+    repairHookRegistration({ fresh: true });
 
     if (!procBeforeUpdate) {
         info("Daemon wasn't running - starting it fresh...");

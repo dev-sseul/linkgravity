@@ -3,29 +3,54 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const { repoRoot, python: venvPython } = require('./venv-paths');
+const { repoRoot, workspaceDir } = require('./venv-paths');
 
 const hooksJsonPath = path.join(os.homedir(), '.gemini', 'config', 'hooks.json');
 
-// PreToolUse/Stop meanings are agy's own hook contract: Stop fires when agy is about to
-// end a turn, and if fullyIdle is false (an async run_command still in flight), stop_hook.py
-// tells agy to keep going instead of losing that result.
+// Not process.execPath: this runs on every agy tool call machine-wide, and an absolute
+// interpreter path dies the moment a version manager moves it.
+const NODE_CMD = 'node';
+
+// A copy, never this package: npm has had no uninstall lifecycle since v7, so an entry pointing
+// into node_modules would 127 every agy tool call once linkgravity is removed.
+const installedHooksDir = path.join(workspaceDir, 'hooks');
+
 const HOOK_REGISTRATIONS = [
     {
         eventType: 'PreToolUse',
         name: 'discord-approval',
-        scriptPath: path.join(repoRoot, 'hooks', 'hook.py'),
+        fileName: 'hook.js',
         defaultTimeout: 3600,
         wrapInMatcher: true,
     },
     {
         eventType: 'Stop',
         name: 'discord-approval-stop',
-        scriptPath: path.join(repoRoot, 'hooks', 'stop_hook.py'),
+        fileName: 'stop_hook.js',
         defaultTimeout: 30,
         wrapInMatcher: false,
     },
 ];
+
+function installHookScripts() {
+    for (const reg of HOOK_REGISTRATIONS) {
+        const source = fs.readFileSync(path.join(repoRoot, 'hooks', reg.fileName), 'utf8');
+        const installedPath = path.join(installedHooksDir, reg.fileName);
+        let installed = null;
+        try {
+            installed = fs.readFileSync(installedPath, 'utf8');
+        } catch {}
+        if (installed === source) continue;
+        try {
+            fs.mkdirSync(installedHooksDir, { recursive: true });
+            fs.writeFileSync(installedPath, source);
+        } catch (err) {
+            // A stale copy still answers agy, so only a missing one is fatal.
+            if (installed === null) throw err;
+            console.log(`⚠️  Couldn't refresh ${installedPath}: ${err.message}`);
+        }
+    }
+}
 
 const RETIRED_HOOKS = [{ eventType: 'PreInvocation', name: 'wait-ms-before-async-reminder' }];
 
@@ -104,7 +129,7 @@ function removeRetiredHooks(config) {
     return removedAny;
 }
 
-function registerHook({ allowFirstTimeCreate = true } = {}) {
+function registerHook({ allowFirstTimeCreate = true, quiet = false } = {}) {
     const config = loadHooksConfig();
     config.hooks = config.hooks || {};
 
@@ -116,9 +141,11 @@ function registerHook({ allowFirstTimeCreate = true } = {}) {
     });
 
     if (isFirstTime && !allowFirstTimeCreate) {
-        console.log(
-            "ℹ️  LinkGravity's Discord/Telegram/Slack approval hook isn't registered with agy yet - run `lgy setup` to enable it.",
-        );
+        if (!quiet) {
+            console.log(
+                "ℹ️  LinkGravity's Discord/Telegram/Slack approval hook isn't registered with agy yet - run `lgy setup` to enable it.",
+            );
+        }
         return;
     }
 
@@ -137,8 +164,11 @@ function registerHook({ allowFirstTimeCreate = true } = {}) {
         wroteChange = true;
     }
 
+    installHookScripts();
+
     for (const reg of HOOK_REGISTRATIONS) {
-        const command = `"${venvPython}" "${reg.scriptPath}"`;
+        const scriptPath = path.join(installedHooksDir, reg.fileName);
+        const command = `${NODE_CMD} "${scriptPath}"`;
         const hookEntry = findHookEntry(config, reg.eventType, reg.name, reg.wrapInMatcher);
         const isNew = !hookEntry.command;
 
@@ -146,9 +176,7 @@ function registerHook({ allowFirstTimeCreate = true } = {}) {
             hookEntry.type = 'command';
             hookEntry.timeout = reg.defaultTimeout;
             hookEntry.command = command;
-            console.log(
-                `🔗 Registered agy ${reg.eventType} hook '${reg.name}' -> ${reg.scriptPath}`,
-            );
+            console.log(`🔗 Registered agy ${reg.eventType} hook '${reg.name}' -> ${scriptPath}`);
             wroteChange = true;
         } else if (hookEntry.command !== command) {
             backupBeforeFirstChange();
@@ -159,9 +187,9 @@ function registerHook({ allowFirstTimeCreate = true } = {}) {
             );
             hookEntry.command = command;
             wroteChange = true;
-        } else {
+        } else if (!quiet) {
             console.log(
-                `🔗 agy ${reg.eventType} hook '${reg.name}' already up to date -> ${reg.scriptPath}`,
+                `🔗 agy ${reg.eventType} hook '${reg.name}' already up to date -> ${scriptPath}`,
             );
         }
     }

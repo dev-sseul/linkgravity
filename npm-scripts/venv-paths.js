@@ -35,7 +35,7 @@ function venvBin(name) {
 }
 
 module.exports = {
-    repoRoot, // where the CODE lives (this checkout/install) - hooks/hook.py, src/main.py, etc.
+    repoRoot, // where the CODE lives (this checkout/install) - hooks/hook.js, src/main.py, etc.
     workspaceDir, // where generated/user DATA lives (venv, logs, lgy.json, wake_refs, ...)
     isWin,
     venvBinDir,
