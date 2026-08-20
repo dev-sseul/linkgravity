@@ -12,7 +12,9 @@ const APPROVE_PORT = 18080;
 const TIMEOUT_MS = 3600 * 1000;
 
 function emit(payload) {
-    process.stdout.write(JSON.stringify(payload));
+    // Exits explicitly: the keep-alive socket and its hour-long timer stay open after the
+    // response arrives, and agy SIGABRTs the process instead of waiting for them to expire.
+    process.stdout.write(JSON.stringify(payload), () => process.exit(0));
 }
 
 function loadApproveToken() {

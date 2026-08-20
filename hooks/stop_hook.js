@@ -19,7 +19,7 @@ function log(line) {
 }
 
 function emit(payload) {
-    process.stdout.write(JSON.stringify(payload));
+    process.stdout.write(JSON.stringify(payload), () => process.exit(0));
 }
 
 async function readStdin() {
