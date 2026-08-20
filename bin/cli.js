@@ -32,9 +32,12 @@ function success(msg) {
     console.log(`${color.green}✔${color.reset} ${msg}`);
 }
 
-// Resolved rather than run through npx: pm2 is a direct dependency, and npx wraps it in
-// "npm exec" + "sh -c", which leaves the real process orphaned when we try to kill it.
-const PM2_BIN = require.resolve('pm2/bin/pm2');
+const { PM2_BIN, PM2_CWD, pm2Env } = require('./pm2');
+
+// `npm` is npm.cmd on Windows, and node refuses to spawn a .cmd without a shell.
+function runNpm(args, options = {}) {
+    return spawnSync('npm', args, { shell: isWin, ...options });
+}
 
 function info(msg) {
     console.log(`\n${color.cyan}▶${color.reset} ${msg}`);
@@ -60,18 +63,8 @@ function runPm2(args, silent = true) {
     const stdioOpt = silent ? 'pipe' : 'inherit';
     const result = spawnSync(process.execPath, [PM2_BIN, ...args], {
         stdio: stdioOpt,
-        cwd: path.join(__dirname, '..'),
-        env: {
-            ...process.env,
-            // pm2 gives Python a pipe not a TTY, so it block-buffers stdout and can sit on log lines indefinitely - force line buffering.
-            PYTHONUNBUFFERED: '1',
-            // pm2 merges --update-env rather than replacing, so a LOG_LEVEL from an earlier run
-            // survives unless a value is passed every time.
-            LOG_LEVEL: process.env.LOG_LEVEL || 'INFO',
-            // Version managers (fnm, nvm) put node on PATH from a shell hook the daemon never runs,
-            // so the bot's own `node` lookup for voice-service would fail without this.
-            PATH: `${path.dirname(process.execPath)}${path.delimiter}${process.env.PATH || ''}`,
-        },
+        cwd: PM2_CWD,
+        env: pm2Env(),
     });
 
     if (result.error) {
@@ -148,7 +141,7 @@ function colorizeLevel(line) {
 }
 
 function runPm2LogsStream(args, printLine) {
-    const cp = spawn(process.execPath, [PM2_BIN, ...args], { cwd: path.join(__dirname, '..') });
+    const cp = spawn(process.execPath, [PM2_BIN, ...args], { cwd: PM2_CWD });
 
     const isNoise = (line) =>
         line.trim().length === 0 ||
@@ -207,7 +200,7 @@ function verifyStartup() {
         );
 
         let cp = spawn(process.execPath, [PM2_BIN, 'logs', LGY_PM2_NAME, '--raw', '--lines', '0'], {
-            cwd: path.join(__dirname, '..'),
+            cwd: PM2_CWD,
         });
 
         let settled = false;
@@ -359,10 +352,7 @@ function isAutostartEnabled() {
 }
 
 function checkLatestVersionFast(currentVersion) {
-    const view = spawnSync('npm', ['view', 'linkgravity', 'version'], {
-        stdio: 'pipe',
-        timeout: 3000,
-    });
+    const view = runNpm(['view', 'linkgravity', 'version'], { stdio: 'pipe', timeout: 3000 });
     if (view.error || view.status !== 0) return null;
     const latest = view.stdout.toString().trim();
     if (!latest) return null;
@@ -609,7 +599,7 @@ if (cmd === 'version' || cmd === '-v' || cmd === '--version') {
     const currentVersion = pkg.version;
 
     info('Checking npm for the latest version...');
-    const viewResult = spawnSync('npm', ['view', 'linkgravity', 'version'], { stdio: 'pipe' });
+    const viewResult = runNpm(['view', 'linkgravity', 'version'], { stdio: 'pipe' });
     if (viewResult.error || viewResult.status !== 0) {
         console.error(
             (viewResult.stderr || '').toString().trim() ||
@@ -629,9 +619,7 @@ if (cmd === 'version' || cmd === '-v' || cmd === '--version') {
     const wasOnline = !!procBeforeUpdate && procBeforeUpdate.pm2_env.status === 'online';
 
     info(`Updating: v${currentVersion} -> v${latestVersion}...`);
-    const installResult = spawnSync('npm', ['install', '-g', 'linkgravity@latest'], {
-        stdio: 'inherit',
-    });
+    const installResult = runNpm(['install', '-g', 'linkgravity@latest'], { stdio: 'inherit' });
     if (installResult.status !== 0) {
         console.error('npm install failed - update aborted, still on the old version.');
         process.exit(1);

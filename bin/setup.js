@@ -1,6 +1,7 @@
 const p = require('@clack/prompts');
 const { spawnSync } = require('child_process');
 const { python: pythonExe } = require('../npm-scripts/venv-paths');
+const { PM2_BIN, PM2_CWD, pm2Env } = require('./pm2');
 const {
     getSettings,
     updateSettings,
@@ -178,11 +179,19 @@ async function collectUserIds(existingIds, platformLabel, required = false) {
     return ids;
 }
 
+function runPm2(args) {
+    return spawnSync(process.execPath, [PM2_BIN, ...args], {
+        stdio: 'pipe',
+        cwd: PM2_CWD,
+        env: pm2Env(),
+    });
+}
+
 function stopDaemon(pm2Name, label) {
     console.log(`${color.cyan}▶${color.reset} Stopping ${label} daemon...`);
-    spawnSync('npx', ['-y', 'pm2', 'delete', pm2Name], { stdio: 'pipe' });
+    runPm2(['delete', pm2Name]);
 
-    const jlist = spawnSync('npx', ['-y', 'pm2', 'jlist'], { stdio: 'pipe' });
+    const jlist = runPm2(['jlist']);
     let stillRunning = false;
     if (jlist.status === 0) {
         try {
@@ -194,17 +203,14 @@ function stopDaemon(pm2Name, label) {
         p.outro(`${label} daemon stopped.`);
     } else {
         p.outro(
-            `${color.yellow}⚠${color.reset} ${label} daemon is still running - run \`npx pm2 delete ${pm2Name}\` manually and check \`npx pm2 list\`.`,
+            `${color.yellow}⚠${color.reset} ${label} daemon is still running - run \`lgy stop\` manually and check \`lgy status\`.`,
         );
     }
 }
 
 function startOrRestartDaemon(pm2Name, scriptPath, label) {
     console.log(`${color.cyan}▶${color.reset} Restarting ${label} daemon to apply changes...`);
-    const restartResult = spawnSync('npx', ['-y', 'pm2', 'restart', pm2Name, '--update-env'], {
-        stdio: 'pipe',
-        env: { ...process.env, PYTHONUNBUFFERED: '1' },
-    });
+    const restartResult = runPm2(['restart', pm2Name, '--update-env']);
 
     if (restartResult.status === 0) {
         p.outro(`${label} daemon restarted.`);
@@ -214,11 +220,14 @@ function startOrRestartDaemon(pm2Name, scriptPath, label) {
     const stderr = (restartResult.stderr || '').toString();
     if (stderr.includes('not found')) {
         // Nothing to restart yet - start it instead of a false "restarted".
-        const startResult = spawnSync(
-            'npx',
-            ['-y', 'pm2', 'start', scriptPath, '--interpreter', pythonExe, '--name', pm2Name],
-            { stdio: 'pipe', env: { ...process.env, PYTHONUNBUFFERED: '1' } },
-        );
+        const startResult = runPm2([
+            'start',
+            scriptPath,
+            '--interpreter',
+            pythonExe,
+            '--name',
+            pm2Name,
+        ]);
         if (startResult.status === 0) {
             p.outro(`${label} daemon wasn't running yet - started it fresh instead.`);
         } else {

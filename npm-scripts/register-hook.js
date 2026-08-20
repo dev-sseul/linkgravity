@@ -3,7 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const { repoRoot, workspaceDir } = require('./venv-paths');
+const { repoRoot, workspaceDir, isWin } = require('./venv-paths');
 
 const hooksJsonPath = path.join(os.homedir(), '.gemini', 'config', 'hooks.json');
 
@@ -59,12 +59,13 @@ function loadHooksConfig() {
         return { hooks: {} };
     }
     try {
-        return JSON.parse(fs.readFileSync(hooksJsonPath, 'utf8'));
+        // Windows tools write a BOM, which JSON.parse rejects.
+        return JSON.parse(fs.readFileSync(hooksJsonPath, 'utf8').replace(/^\uFEFF/, ''));
     } catch (err) {
         const backupPath = `${hooksJsonPath}.corrupted-${Date.now()}`;
         fs.copyFileSync(hooksJsonPath, backupPath);
         console.warn(
-            `⚠️  ${hooksJsonPath} was invalid JSON - backed up to ${backupPath} and starting fresh.`,
+            `⚠️  ${hooksJsonPath} was invalid JSON - copied to ${backupPath}. Any hooks it held, including other tools', are about to be replaced.`,
         );
         return { hooks: {} };
     }
@@ -168,7 +169,8 @@ function registerHook({ allowFirstTimeCreate = true, quiet = false } = {}) {
 
     for (const reg of HOOK_REGISTRATIONS) {
         const scriptPath = path.join(installedHooksDir, reg.fileName);
-        const command = `${NODE_CMD} "${scriptPath}"`;
+        // Windows agy takes everything after the first token as one argument; POSIX agy uses a shell.
+        const command = isWin ? `${NODE_CMD} ${scriptPath}` : `${NODE_CMD} "${scriptPath}"`;
         const hookEntry = findHookEntry(config, reg.eventType, reg.name, reg.wrapInMatcher);
         const isNew = !hookEntry.command;
 
