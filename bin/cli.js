@@ -14,7 +14,7 @@ const {
     LGY_SCRIPT_PATH,
 } = require('./platforms');
 
-const { python: pythonExe, isWin } = require('../npm-scripts/venv-paths');
+const { daemonPython, isWin } = require('../npm-scripts/venv-paths');
 const { isEnvironmentReady } = require('../npm-scripts/ensure-env');
 
 const cmd = process.argv[2];
@@ -430,7 +430,7 @@ if (cmd === 'version' || cmd === '-v' || cmd === '--version') {
         'start',
         LGY_SCRIPT_PATH,
         '--interpreter',
-        pythonExe,
+        daemonPython,
         '--name',
         LGY_PM2_NAME,
         '--update-env',
@@ -670,7 +670,7 @@ if (cmd === 'version' || cmd === '-v' || cmd === '--version') {
             'start',
             LGY_SCRIPT_PATH,
             '--interpreter',
-            pythonExe,
+            daemonPython,
             '--name',
             LGY_PM2_NAME,
             '--update-env',

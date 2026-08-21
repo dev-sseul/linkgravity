@@ -40,6 +40,10 @@ module.exports = {
     isWin,
     venvBinDir,
     python: venvBin('python'),
+    // Only for pm2's --interpreter: pm2 spawns with detached:true, which on Windows forces a
+    // console window and ignores its own windowsHide option. pythonw is GUI-subsystem so no
+    // console is ever allocated, and pm2 pipes stdio anyway so no output is lost.
+    daemonPython: venvBin(isWin ? 'pythonw' : 'python'),
     pip: venvBin('pip'),
     preCommit: venvBin('pre-commit'),
 };

@@ -11,7 +11,7 @@ from functools import partial
 import discord
 from discord.ext import commands
 
-from config import DISCORD_TOKEN, logger, session_manager
+from config import CREATION_FLAGS, DISCORD_TOKEN, logger, session_manager
 from handlers.message_router import handle_message
 from messengers.discord_adapter import DiscordAdapter
 from messengers.registry import register_adapter
@@ -128,7 +128,7 @@ async def status_updater_task():
 
 
 def _spawn_voice_process(voice_dir: str) -> subprocess.Popen:
-    return subprocess.Popen(["node", "index.js"], cwd=voice_dir)
+    return subprocess.Popen(["node", "index.js"], cwd=voice_dir, creationflags=CREATION_FLAGS)
 
 
 async def _supervise_voice_process(voice_dir: str):

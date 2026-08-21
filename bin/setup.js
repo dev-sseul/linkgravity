@@ -1,6 +1,6 @@
 const p = require('@clack/prompts');
 const { spawnSync } = require('child_process');
-const { python: pythonExe } = require('../npm-scripts/venv-paths');
+const { daemonPython } = require('../npm-scripts/venv-paths');
 const { PM2_BIN, PM2_CWD, pm2Env } = require('./pm2');
 const {
     getSettings,
@@ -224,7 +224,7 @@ function startOrRestartDaemon(pm2Name, scriptPath, label) {
             'start',
             scriptPath,
             '--interpreter',
-            pythonExe,
+            daemonPython,
             '--name',
             pm2Name,
         ]);

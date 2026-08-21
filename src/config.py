@@ -1,5 +1,7 @@
 import os
 import secrets
+import shutil
+import subprocess
 from pathlib import Path
 
 from core.atomic_io import atomic_write_json, safe_load_json
@@ -158,7 +160,22 @@ MODEL_CHOICES = {
     "pro": "Gemini 3.1 Pro",
 }
 
-AGY_BIN = os.getenv("AGY_BIN_PATH", str(Path.home() / ".local/bin/agy"))
+
+def _resolve_agy_bin() -> str:
+    fallback = str(Path.home() / ".local/bin/agy")
+    for candidate in (os.getenv("AGY_BIN_PATH"), fallback):
+        if candidate and Path(candidate).is_file():
+            return candidate
+    # Windows installs agy under AppData and adds it to PATH instead.
+    return shutil.which("agy") or fallback
+
+
+# Must stay in sync with findAgyBin() in bin/cli.js.
+AGY_BIN = _resolve_agy_bin()
+
+# pm2 spawns the daemon with detached:true, so on Windows it owns no console; without this
+# flag every child it launches gets a console window of its own.
+CREATION_FLAGS = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
 session_manager = SessionManager(DATA_DIR)
 

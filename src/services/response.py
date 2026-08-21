@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Any
 
-from config import MAX_EMBED_LEN, MODEL_CHOICES, session_manager
+from config import MAX_EMBED_LEN, bot_settings, session_manager
 from messengers.registry import get_adapter_for_platform
 from services.discord_helpers import split_message
 from utils.utils import get_current_model
@@ -18,8 +18,8 @@ async def send_agy_response(
     adapter = get_adapter_for_platform(session.get("platform", "discord"))
     session_manager.save_sessions()
 
-    session_model = session.get("model")
-    model_display = MODEL_CHOICES.get(session_model, session_model) if session_model else get_current_model()
+    # Same precedence as the /model autocomplete in general_cog.
+    model_display = session.get("model") or bot_settings.get("default_model") or get_current_model()
 
     parts = split_message(response_text, MAX_EMBED_LEN)
     for idx, part in enumerate(parts):

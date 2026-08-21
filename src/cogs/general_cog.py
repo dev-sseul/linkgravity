@@ -51,7 +51,7 @@ async def fetch_models_background():
     import time
 
     try:
-        from config import AGY_BIN
+        from config import AGY_BIN, CREATION_FLAGS
 
         logger.debug(f"Starting fetch_models_background using AGY_BIN: {AGY_BIN}")
         env = os.environ.copy()
@@ -63,6 +63,7 @@ async def fetch_models_background():
             stderr=asyncio.subprocess.PIPE,
             stdin=asyncio.subprocess.DEVNULL,
             env=env,
+            creationflags=CREATION_FLAGS,
         )
         try:
             stdout, stderr = await asyncio.wait_for(p.communicate(), timeout=30.0)

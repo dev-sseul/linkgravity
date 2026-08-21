@@ -163,7 +163,7 @@ async def run_agy(
                 if os.name == "nt":
                     import subprocess
 
-                    kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+                    kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
                 elif hasattr(os, "setsid"):
                     kwargs["preexec_fn"] = os.setsid
 
