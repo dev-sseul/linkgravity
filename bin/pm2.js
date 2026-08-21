@@ -10,6 +10,9 @@ function pm2Env() {
         ...process.env,
         // pm2 gives Python a pipe not a TTY, so it block-buffers stdout and can sit on log lines indefinitely - force line buffering.
         PYTHONUNBUFFERED: '1',
+        // Without this Python inherits the console codepage (cp949 on Korean Windows) and loguru
+        // drops every line it can't encode - including the one verifyStartup waits for.
+        PYTHONIOENCODING: 'utf-8',
         // pm2 merges --update-env rather than replacing, so a LOG_LEVEL from an earlier run
         // survives unless a value is passed every time.
         LOG_LEVEL: process.env.LOG_LEVEL || 'INFO',

@@ -203,14 +203,33 @@ function verifyStartup() {
             cwd: PM2_CWD,
         });
 
+        const baseline = getPm2Proc()?.pm2_env?.restart_time ?? 0;
+
         let settled = false;
         const finish = (ok) => {
             if (settled) return;
             settled = true;
             clearTimeout(timer);
+            clearInterval(watchdog);
             cp.kill();
             resolve(ok);
         };
+
+        // A process that exits on startup never logs anything for the stream below to match, so
+        // pm2's own counters are the only signal that it is dying and being restarted.
+        const watchdog = setInterval(() => {
+            const proc = getPm2Proc();
+            if (!proc) return;
+            const { status, restart_time: restarts = 0 } = proc.pm2_env;
+            if (status === 'errored' || restarts > baseline) {
+                console.log(
+                    `\n\n${color.yellow}❌ The daemon keeps exiting - pm2 has restarted it ` +
+                        `${restarts - baseline} time(s) (status: ${status}).${color.reset}`,
+                );
+                console.log(`   Run ${color.cyan}lgy logs${color.reset} to see why.\n`);
+                finish(false);
+            }
+        }, 2000);
 
         let timer = setTimeout(() => {
             console.log(
@@ -302,6 +321,27 @@ function findAgyBin() {
     return null;
 }
 
+// Returns null when the daemon can be started, or the reason it can't.
+function launchBlocker() {
+    const settings = getSettings();
+    const anyConfigured = Object.keys(PLATFORMS).some(
+        (key) => platformState(key, settings).configured,
+    );
+    if (!anyConfigured) {
+        return (
+            'No messenger is configured yet - set up at least one of Discord, Telegram, or ' +
+            `Slack first: ${color.cyan}lgy setup${color.reset}`
+        );
+    }
+    if (!findAgyBin()) {
+        return (
+            "Couldn't find the agy CLI (checked $AGY_BIN_PATH, ~/.local/bin/agy, and PATH). " +
+            'Install/configure agy first, or set the AGY_BIN_PATH environment variable to its location.'
+        );
+    }
+    return null;
+}
+
 function getPm2Proc() {
     const jlist = spawnSync(process.execPath, [PM2_BIN, 'jlist'], { stdio: 'pipe' });
     if (jlist.status !== 0) return null;
@@ -372,24 +412,9 @@ if (cmd === 'version' || cmd === '-v' || cmd === '--version') {
         process.exit(1);
     }
 
-    const settings = getSettings();
-    const anyConfigured = Object.keys(PLATFORMS).some(
-        (key) => platformState(key, settings).configured,
-    );
-    if (!anyConfigured) {
-        console.log(
-            `\n${color.yellow}⚠${color.reset} No messenger is configured yet - ` +
-                `set up at least one of Discord, Telegram, or Slack first: ${color.cyan}lgy setup${color.reset}\n`,
-        );
-        process.exit(1);
-    }
-
-    if (!findAgyBin()) {
-        console.log(
-            `\n${color.yellow}⚠${color.reset} Couldn't find the agy CLI ` +
-                `(checked $AGY_BIN_PATH, ~/.local/bin/agy, and PATH). Install/configure agy first, ` +
-                `or set the AGY_BIN_PATH environment variable to its location.\n`,
-        );
+    const blocker = launchBlocker();
+    if (blocker) {
+        console.log(`\n${color.yellow}⚠${color.reset} ${blocker}\n`);
         process.exit(1);
     }
 
@@ -634,6 +659,12 @@ if (cmd === 'version' || cmd === '-v' || cmd === '--version') {
     repairHookRegistration({ fresh: true });
 
     if (!procBeforeUpdate) {
+        const blocker = launchBlocker();
+        if (blocker) {
+            console.log(`\n${color.yellow}⚠${color.reset} ${blocker}\n`);
+            success('Update finished - the daemon was left stopped.\n');
+            process.exit(0);
+        }
         info("Daemon wasn't running - starting it fresh...");
         runPm2([
             'start',
