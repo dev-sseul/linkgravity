@@ -342,7 +342,10 @@ function launchBlocker() {
     return null;
 }
 
-function getPm2Proc() {
+// pm2 keys an app by name AND script path, so an install that moved (node version switch, npm prefix
+// change, npm link) registers a second app under the same name instead of replacing the first, and
+// every name-based pm2 command then acts on both at once.
+function getPm2Procs() {
     const jlist = spawnSync(process.execPath, [PM2_BIN, 'jlist'], { stdio: 'pipe' });
     if (jlist.status !== 0) return null;
 
@@ -353,7 +356,7 @@ function getPm2Proc() {
         if (out[i] !== '[') continue;
         try {
             const procs = JSON.parse(out.slice(i));
-            if (Array.isArray(procs)) return procs.find((p) => p.name === LGY_PM2_NAME) || null;
+            if (Array.isArray(procs)) return procs.filter((p) => p.name === LGY_PM2_NAME);
         } catch (e) {}
     }
 
@@ -361,6 +364,71 @@ function getPm2Proc() {
         `${color.yellow}⚠${color.reset} Couldn't read pm2 status (no valid JSON found in its output). Raw output:\n${out.trim()}`,
     );
     return null;
+}
+
+function isOurRegistration(proc) {
+    const registered = proc.pm2_env.pm_exec_path || '';
+    if (!isWin) return registered === LGY_SCRIPT_PATH;
+    return registered.toLowerCase() === LGY_SCRIPT_PATH.toLowerCase();
+}
+
+function printRegistrations(procs) {
+    for (const proc of procs) {
+        const mine = isOurRegistration(proc) ? '  <- this install' : '';
+        console.log(
+            `    ${String(proc.pm2_env.status).padEnd(8)} ${proc.pm2_env.pm_exec_path}${mine}`,
+        );
+    }
+}
+
+let duplicatesReported = false;
+function pickPm2Proc(procs) {
+    if (!procs || procs.length === 0) return null;
+
+    if (procs.length > 1 && !duplicatesReported) {
+        duplicatesReported = true;
+        console.log(
+            `\n${color.yellow}⚠${color.reset} pm2 has ${procs.length} apps registered as '${LGY_PM2_NAME}' - only this install's should be:`,
+        );
+        printRegistrations(procs);
+        console.log(
+            `   Everything below reports on one of them. Run ${color.cyan}lgy start${color.reset} to drop the stale ones.\n`,
+        );
+    }
+
+    const isOnline = (proc) => proc.pm2_env.status === 'online';
+    return (
+        procs.find((proc) => isOnline(proc) && isOurRegistration(proc)) ||
+        procs.find(isOnline) ||
+        procs.find(isOurRegistration) ||
+        procs[0]
+    );
+}
+
+function getPm2Proc() {
+    return pickPm2Proc(getPm2Procs());
+}
+
+function startDaemon() {
+    runPm2([
+        'start',
+        LGY_SCRIPT_PATH,
+        '--interpreter',
+        daemonPython,
+        '--name',
+        LGY_PM2_NAME,
+        '--update-env',
+    ]);
+}
+
+// The saved autostart list keeps the removed paths until pm2 save runs, so a reboot restores them.
+function clearRegistrations(procs) {
+    console.log(
+        `\n${color.yellow}⚠${color.reset} pm2 has ${procs.length} app(s) registered as '${LGY_PM2_NAME}', not all from this install:`,
+    );
+    printRegistrations(procs);
+    console.log('   Removing all of them and registering this install alone.\n');
+    runPm2(['delete', LGY_PM2_NAME]);
 }
 
 // Best-effort: pm2 has no API for "is this registered to start on boot", so this checks the OS directly and returns null (unknown) if that check itself isn't available.
@@ -403,8 +471,11 @@ if (cmd === 'version' || cmd === '-v' || cmd === '--version') {
     const pkg = require('../package.json');
     console.log(`linkgravity v${pkg.version}`);
 } else if (cmd === 'start') {
-    const existing = getPm2Proc();
-    if (existing && existing.pm2_env.status === 'online') {
+    const registered = getPm2Procs() || [];
+    const stale = registered.filter((proc) => !isOurRegistration(proc));
+    const existing = registered.find(isOurRegistration);
+
+    if (!stale.length && existing && existing.pm2_env.status === 'online') {
         console.log(
             `\n${color.yellow}⚠${color.reset} LinkGravity is already running. ` +
                 `Use ${color.cyan}lgy restart${color.reset} to apply changes, or ${color.cyan}lgy stop${color.reset} first.\n`,
@@ -425,16 +496,11 @@ if (cmd === 'version' || cmd === '-v' || cmd === '--version') {
 
     repairHookRegistration();
 
+    if (stale.length) clearRegistrations(registered);
+
     info('Starting LinkGravity daemon...');
-    runPm2([
-        'start',
-        LGY_SCRIPT_PATH,
-        '--interpreter',
-        daemonPython,
-        '--name',
-        LGY_PM2_NAME,
-        '--update-env',
-    ]);
+    startDaemon();
+    if (stale.length) runPm2(['save']);
     verifyStartup().then((ok) => process.exit(ok ? 0 : 1));
 } else if (cmd === 'stop') {
     info('Stopping LinkGravity daemon...');
@@ -442,6 +508,18 @@ if (cmd === 'version' || cmd === '-v' || cmd === '--version') {
     runPm2(['reset', LGY_PM2_NAME]);
     success('Daemon stopped successfully.\n');
 } else if (cmd === 'restart') {
+    const registered = getPm2Procs() || [];
+    if (registered.some((proc) => !isOurRegistration(proc))) {
+        console.log(
+            `\n${color.yellow}⚠${color.reset} pm2 has ${registered.length} app(s) registered as '${LGY_PM2_NAME}', and a restart would start every one of them:`,
+        );
+        printRegistrations(registered);
+        console.log(
+            `   Run ${color.cyan}lgy start${color.reset} instead - it drops the stale ones first.\n`,
+        );
+        process.exit(1);
+    }
+
     info('Restarting LinkGravity daemon...');
     runPm2(['restart', LGY_PM2_NAME, '--update-env']);
     runPm2(['reset', LGY_PM2_NAME]);
@@ -640,8 +718,10 @@ if (cmd === 'version' || cmd === '-v' || cmd === '--version') {
         process.exit(0);
     }
 
-    const procBeforeUpdate = getPm2Proc();
+    const registeredBeforeUpdate = getPm2Procs() || [];
+    const procBeforeUpdate = pickPm2Proc(registeredBeforeUpdate);
     const wasOnline = !!procBeforeUpdate && procBeforeUpdate.pm2_env.status === 'online';
+    const hadStale = registeredBeforeUpdate.some((proc) => !isOurRegistration(proc));
 
     info(`Updating: v${currentVersion} -> v${latestVersion}...`);
     const installResult = runNpm(['install', '-g', 'linkgravity@latest'], { stdio: 'inherit' });
@@ -666,15 +746,20 @@ if (cmd === 'version' || cmd === '-v' || cmd === '--version') {
             process.exit(0);
         }
         info("Daemon wasn't running - starting it fresh...");
-        runPm2([
-            'start',
-            LGY_SCRIPT_PATH,
-            '--interpreter',
-            daemonPython,
-            '--name',
-            LGY_PM2_NAME,
-            '--update-env',
-        ]);
+        startDaemon();
+        verifyStartup().then((ok) => process.exit(ok ? 0 : 1));
+    } else if (hadStale) {
+        clearRegistrations(registeredBeforeUpdate);
+        if (!wasOnline) {
+            runPm2(['save']);
+            success(
+                `Daemon was stopped - leaving it stopped. Run 'lgy start' when you're ready.\n`,
+            );
+            process.exit(0);
+        }
+        info('Starting the daemon from this install...');
+        startDaemon();
+        runPm2(['save']);
         verifyStartup().then((ok) => process.exit(ok ? 0 : 1));
     } else if (wasOnline) {
         info('Restarting daemon to apply the update...');
@@ -753,7 +838,9 @@ if (cmd === 'version' || cmd === '-v' || cmd === '--version') {
         spawnSync(process.argv[0], [process.argv[1], action], { stdio: 'inherit' });
     })();
 } else {
-    console.log(
+    // Not stdout: an eval "$(lgy ...)" line in a shell rc would run this message as commands.
+    console.error(
         `\n❌ Unknown command: ${cmd || 'none'}\n💡 Run 'lgy help' to see available commands.`,
     );
+    process.exit(1);
 }

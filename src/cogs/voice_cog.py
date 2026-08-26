@@ -583,7 +583,7 @@ class VoiceCog(commands.Cog):
             wake_syllables = len(re.sub(r"[^\w가-힣]", "", matched_wake_word or ""))
             min_prefix_similarity = 0.55 if wake_syllables <= 2 else 0.35
             if is_waking_up and prefix_similarity is not None and prefix_similarity < min_prefix_similarity:
-                self.logger.info(
+                self.logger.debug(
                     f"STT: ignoring wake - '{text}' doesn't resemble '{matched_wake_word}' "
                     f"(prefix similarity {prefix_similarity:.2f}, needed {min_prefix_similarity:.2f})"
                 )

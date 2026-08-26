@@ -258,7 +258,7 @@ async def run_slack(stop_event: asyncio.Event) -> None:
 
     app, adapter = build_app()
     try:
-        await adapter.resolve_bot_user_id()
+        bot_user_id = await adapter.resolve_bot_user_id()
     except SlackApiError as e:
         logger.critical(f"Slack auth_test failed - check slack_bot_token: {e}")
         return
@@ -266,6 +266,9 @@ async def run_slack(stop_event: asyncio.Event) -> None:
     handler = AsyncSocketModeHandler(app, SLACK_APP_TOKEN)
     logger.info("✅ Slack bot starting (Socket Mode)...")
     await handler.connect_async()
+    # cli.js's verifyStartup() waits for this exact sentence - without it a Slack-only install
+    # never reports a successful startup and every lgy start/restart/update times out.
+    logger.info(f"✅ Bot is fully online and ready! Logged in as {bot_user_id}")
     platform_health.set_status("slack", "running")
     try:
         await stop_event.wait()
