@@ -83,9 +83,14 @@ async def cmd_model(ack, body, respond, context) -> None:
         return
     conversation_id, session = found
 
-    from cogs.general_cog import load_cached_models
+    import time
 
-    cached_models = load_cached_models()
+    import cogs.general_cog as general_cog
+
+    if time.time() - general_cog.last_models_fetch > 3600 and not general_cog.fetching_models:
+        general_cog.fetching_models = True
+        await general_cog.fetch_models_background()
+    cached_models = general_cog.cached_models
     current_model = session.get("model") or bot_settings.get("default_model")
 
     def _apply_model(final_model: str) -> str:
