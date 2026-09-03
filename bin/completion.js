@@ -29,13 +29,21 @@ function installCompletion(shell = path.basename(process.env.SHELL || '')) {
 
     const dest = path.join(os.homedir(), ...target.dest);
     let rcUpdated = false;
+    let cleaned = false;
     try {
         fs.mkdirSync(path.dirname(dest), { recursive: true });
         fs.copyFileSync(path.join(__dirname, 'completions', target.src), dest);
 
         if (target.rc) {
             const rc = path.join(os.homedir(), target.rc);
-            const existing = fs.existsSync(rc) ? fs.readFileSync(rc, 'utf8') : '';
+            let existing = fs.existsSync(rc) ? fs.readFileSync(rc, 'utf8') : '';
+            // Strip any pre-marker `eval "$(lgy completion ...)"` line - lgy never had that subcommand.
+            const stale = /^\s*eval "\$\(lgy completion[^)]*\)"\s*$/gm;
+            if (stale.test(existing)) {
+                fs.writeFileSync(rc, existing.replace(stale, '').replace(/\n{3,}/g, '\n\n'));
+                existing = fs.readFileSync(rc, 'utf8');
+                cleaned = true;
+            }
             if (!existing.includes(MARKER)) {
                 fs.appendFileSync(rc, zshRcBlock(path.dirname(dest)));
                 rcUpdated = true;
@@ -44,7 +52,12 @@ function installCompletion(shell = path.basename(process.env.SHELL || '')) {
     } catch {
         return null;
     }
-    return { shell, file: dest, rc: rcUpdated ? path.join(os.homedir(), target.rc) : null };
+    return {
+        shell,
+        file: dest,
+        rc: rcUpdated ? path.join(os.homedir(), target.rc) : null,
+        cleaned,
+    };
 }
 
 module.exports = { installCompletion };

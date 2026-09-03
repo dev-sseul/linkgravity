@@ -59,6 +59,20 @@ function repairHookRegistration({ fresh = false } = {}) {
     }
 }
 
+function repairShellCompletion() {
+    // Runs on every update too (not just the rarely-rerun setup) so existing installs get cleaned up.
+    try {
+        const result = require('./completion').installCompletion();
+        if (result?.cleaned) {
+            console.log(
+                `${color.dim}Cleaned up a stale completion line in your shell rc file.${color.reset}`,
+            );
+        }
+    } catch {
+        // Best-effort - a broken shell rc file shouldn't fail the update.
+    }
+}
+
 function runPm2(args, silent = true) {
     const stdioOpt = silent ? 'pipe' : 'inherit';
     const result = spawnSync(process.execPath, [PM2_BIN, ...args], {
@@ -714,6 +728,7 @@ if (cmd === 'version' || cmd === '-v' || cmd === '--version') {
 
     if (latestVersion === currentVersion) {
         repairHookRegistration();
+        repairShellCompletion();
         success(`Already up to date (v${currentVersion}).\n`);
         process.exit(0);
     }
@@ -737,6 +752,7 @@ if (cmd === 'version' || cmd === '-v' || cmd === '--version') {
     delete require.cache[require.resolve('../npm-scripts/ensure-env')];
     require('../npm-scripts/ensure-env').ensureEnvironment();
     repairHookRegistration({ fresh: true });
+    repairShellCompletion();
 
     if (!procBeforeUpdate) {
         const blocker = launchBlocker();
