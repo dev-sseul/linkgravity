@@ -54,13 +54,21 @@ class SessionManager:
     def _load_persistent(self) -> dict:
         from config import logger
 
-        data = safe_load_json(self.persistent_file, {"tools": [], "commands": []}, logger=logger)
+        data = safe_load_json(self.persistent_file, {"tools": [], "commands": [], "auto_mode": False}, logger=logger)
         if isinstance(data, list):
-            return {"tools": data, "commands": []}
+            return {"tools": data, "commands": [], "auto_mode": False}
+        data.setdefault("auto_mode", False)
         return data
 
     def save_persistent(self):
         atomic_write_json(self.persistent_file, self.persistent_allowed)
+
+    def is_auto_mode(self) -> bool:
+        return bool(self.persistent_allowed.get("auto_mode"))
+
+    def set_auto_mode(self, enabled: bool):
+        self.persistent_allowed["auto_mode"] = enabled
+        self.save_persistent()
 
     def register_queue(self, thread_id: str, queue: asyncio.Queue):
         self.active_queues[str(thread_id)] = queue

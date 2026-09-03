@@ -162,6 +162,22 @@ async def cmd_permissions(update: Update, context) -> None:
     await handle.send(update.effective_chat.id)
 
 
+async def cmd_automode(update: Update, context) -> None:
+    user = update.effective_user
+    if not allowed(user.id, "telegram"):
+        await update.message.reply_text("❌ Denied")
+        return
+
+    state = (context.args[0] if context.args else "").lower()
+    if state not in ("on", "off"):
+        await update.message.reply_text("Usage: /automode on|off")
+        return
+
+    from services import permissions
+
+    await update.message.reply_text(permissions.set_auto_mode(state == "on"))
+
+
 async def cmd_credit(update: Update, context) -> None:
     user = update.effective_user
     adapter: TelegramAdapter = context.bot_data["adapter"]
@@ -235,6 +251,7 @@ async def on_ready(app: Application) -> None:
             BotCommand("model", "Change the AI model for this session"),
             BotCommand("credit", "Turn AI Credits on/off"),
             BotCommand("permissions", "View and remove allowed tools and commands"),
+            BotCommand("automode", "Auto-allow every approval globally (on/off)"),
         ]
     )
     logger.info(f"✅ Bot is fully online and ready! Logged in as @{app.bot.username}")
@@ -250,6 +267,7 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("model", cmd_model))
     app.add_handler(CommandHandler("credit", cmd_credit))
     app.add_handler(CommandHandler("permissions", cmd_permissions))
+    app.add_handler(CommandHandler("automode", cmd_automode))
     app.add_handler(CallbackQueryHandler(adapter.handle_callback_query))
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, on_message))
     app.add_error_handler(on_error)

@@ -5,6 +5,17 @@ from messengers.base import PermissionEntry
 PAGE_SIZE = 20
 
 
+def set_auto_mode(enabled: bool) -> str:
+    session_manager.set_auto_mode(enabled)
+    if enabled:
+        return (
+            "⚠️ **Auto-mode ON** — every tool/command approval will be auto-allowed globally, "
+            "across all sessions and platforms, until you run `/automode off`. Protected paths "
+            "are still blocked regardless."
+        )
+    return "🔒 Auto-mode OFF — approvals are back to normal."
+
+
 def list_entries() -> list[PermissionEntry]:
     allowed = session_manager.persistent_allowed
     return [

@@ -188,8 +188,8 @@ async def handle_approve_request(request):
                 if not sub_cmd:
                     continue
 
-                is_auto_allowed = False
-                if "\n" not in sub_cmd and "|" not in sub_cmd:
+                is_auto_allowed = session_manager.is_auto_mode()
+                if not is_auto_allowed and "\n" not in sub_cmd and "|" not in sub_cmd:
                     try:
                         tokens = shlex.split(sub_cmd)
                         for scope in session_manager.persistent_allowed.get("commands", []):
@@ -270,7 +270,7 @@ async def handle_approve_request(request):
             return allow_response(tool_name, tool_input)
 
         else:
-            if is_tool_allowed(tool_name, tool_input):
+            if session_manager.is_auto_mode() or is_tool_allowed(tool_name, tool_input):
                 if target_thread and tool_msg_text:
                     await send_ordered(
                         target_thread_id, lambda: _send_chunked(adapter, target_thread, tool_msg_formatted)

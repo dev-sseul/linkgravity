@@ -155,6 +155,24 @@ async def cmd_permissions(ack, body, respond, context) -> None:
     await handle.send(SlackConversationRef(channel=channel, thread_ts=None))
 
 
+async def cmd_automode(ack, body, respond, context) -> None:
+    await ack()
+    user_id = body["user_id"]
+
+    if not allowed(user_id, "slack"):
+        await respond("❌ Denied")
+        return
+
+    state = (body.get("text") or "").strip().lower()
+    if state not in ("on", "off"):
+        await respond("Usage: /automode on|off")
+        return
+
+    from services import permissions
+
+    await respond(permissions.set_auto_mode(state == "on"))
+
+
 async def cmd_credit(ack, body, respond, context) -> None:
     await ack()
     adapter: SlackAdapter = context["adapter"]
@@ -239,6 +257,7 @@ def build_app() -> tuple[AsyncApp, SlackAdapter]:
     app.command("/model")(cmd_model)
     app.command("/credit")(cmd_credit)
     app.command("/permissions")(cmd_permissions)
+    app.command("/automode")(cmd_automode)
     app.event("message")(on_message)
     app.action(re.compile(".*"))(on_action)
     app.view(re.compile(".*"))(on_view_submission)

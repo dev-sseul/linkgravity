@@ -276,6 +276,21 @@ class GeneralCog(commands.Cog):
         await interaction.response.send_message("🔐 Permission list posted above.", ephemeral=True)
 
     @app_commands.command(
+        name="automode", description="Auto-allow every approval globally, across all sessions (on/off)"
+    )
+    @app_commands.describe(state="on or off")
+    async def cmd_automode(self, interaction: discord.Interaction, state: str):
+        if not allowed(interaction.user.id):
+            return await interaction.response.send_message("❌ Denied", ephemeral=True)
+        if state.lower() not in ("on", "off"):
+            return await interaction.response.send_message("Use `on` or `off`.", ephemeral=True)
+
+        from services import permissions
+
+        msg = permissions.set_auto_mode(state.lower() == "on")
+        await interaction.response.send_message(msg)
+
+    @app_commands.command(
         name="stop", description="Stop the currently generating response or task (Equivalent to ESC in CLI)"
     )
     async def cmd_stop(self, interaction: discord.Interaction):
