@@ -164,6 +164,7 @@ class _SlackPromptHandle(PromptHandle):
         self.channel: str | None = None
         self.ts: str | None = None
         self.outcome: ToolApprovalOutcome | None = None
+        self.resolved = False
 
     async def send(self, conversation_ref: SlackConversationRef) -> dict:
         try:
@@ -185,6 +186,12 @@ class _SlackPromptHandle(PromptHandle):
             self._cleanup()
         if self.ts is None:
             return
+        if not self.resolved:
+            # No button click happened - resolve() would have already rewritten text/blocks otherwise.
+            self.blocks = [b for b in self.blocks if b.get("type") != "actions"]
+            self.blocks.append(
+                {"type": "section", "text": {"type": "mrkdwn", "text": "⏰ *Expired - no response in time*"}}
+            )
         try:
             await self.client.chat_update(channel=self.channel, ts=self.ts, text=self.text, blocks=self.blocks)
         except SlackApiError as e:
@@ -390,6 +397,7 @@ class SlackAdapter(MessengerAdapter):
         elements = []
 
         async def resolve(decision: str, scope: ScopeOption | None, resp_body: dict, client: AsyncWebClient):
+            handle.resolved = True
             handle.outcome = ToolApprovalOutcome(decision=decision, scope=scope)
             if not decision_future.done():
                 decision_future.set_result(decision)
@@ -463,6 +471,7 @@ class SlackAdapter(MessengerAdapter):
         keys: list[str] = []
 
         async def resolve(chosen_text: str, note: str, body: dict, client: AsyncWebClient):
+            handle.resolved = True
             if not answer_future.done():
                 answer_future.set_result(chosen_text)
             new_text = f"✅ *{note}: {chosen_text}*"

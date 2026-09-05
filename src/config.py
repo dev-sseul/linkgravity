@@ -148,7 +148,7 @@ TMP_VOICE_DIR.mkdir(parents=True, exist_ok=True)
 
 MAX_EMBED_LEN = 1900
 STREAM_RATE_LIMIT_SEC = 0.5
-APPROVAL_TIMEOUT_SEC = 1800
+APPROVAL_TIMEOUT_SEC = 86400
 PERSISTENT_FILE = DATA_DIR / "persistent_tools.json"
 SESSION_FILE = DATA_DIR / "sessions.json"
 

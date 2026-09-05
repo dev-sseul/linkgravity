@@ -78,6 +78,8 @@ def _clean_inline(text: str) -> str:
 async def handle_approve_request(request):
     # Tracks approval_keys registered this request so the exception handler can clean them up.
     registered_approval_keys = []
+    # Tracks prompts sent this request so a later exception can still finalize (disable) them.
+    sent_prompts = []
     try:
         data = await request.json()
         conv_id = data.get("conversation_id")
@@ -151,6 +153,7 @@ async def handle_approve_request(request):
             prompt = adapter.create_question_prompt(
                 future, question_text, options, multi_select=is_multi_select, allow_write_in=True
             )
+            sent_prompts.append(prompt)
             await send_ordered(target_thread_id, lambda: prompt.send(target_thread))
 
             try:
@@ -234,6 +237,7 @@ async def handle_approve_request(request):
                 prompt = adapter.create_tool_approval_prompt(
                     future, "⚠️ Tool Execution Approval Required", prompt_desc, scope_options
                 )
+                sent_prompts.append(prompt)
 
                 sub_cmd_display, sub_cmd_desc, _ = format_bash_display(sub_cmd)
                 sub_cmd_formatted = f"```text\n{sub_cmd_display}\n```{sub_cmd_desc}"
@@ -287,6 +291,7 @@ async def handle_approve_request(request):
             prompt = adapter.create_tool_approval_prompt(
                 future, "⚠️ Tool Execution Approval Required", tool_msg_formatted, scope_options
             )
+            sent_prompts.append(prompt)
 
             async def _send_prompt():
                 await _send_chunked(adapter, target_thread, tool_msg_formatted)
@@ -316,4 +321,9 @@ async def handle_approve_request(request):
         logger.exception(f"Error in handle_approve_request: {e}")
         for key in registered_approval_keys:
             session_manager.clear_pending_approval(key)
+        for prompt in sent_prompts:
+            try:
+                await prompt.finalize()
+            except Exception:
+                pass
         return web.json_response({"decision": "allow"})
