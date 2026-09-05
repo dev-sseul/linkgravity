@@ -229,7 +229,7 @@ async def run_agy(
                 gather_task = asyncio.create_task(_gather_pipes())
                 wait_task = asyncio.create_task(proc.wait())
 
-                # Slices let the timeout pause during a pending tool approval (up to 3600s).
+                # Slices let the timeout pause indefinitely while any approval is pending (hooks/hook.js waits up to 24h).
                 from config import session_manager as _sm
 
                 poll_slice = 5.0
@@ -348,7 +348,7 @@ async def agy_new_conversation(
     content: str, model: str = None, stream_queue: asyncio.Queue = None, thread_id: str = None, cwd: str = None
 ) -> tuple[str, str]:
     # --print consumes the next token as the prompt, so the flag must come first.
-    args = ["--dangerously-skip-permissions", "--print", content]
+    args = ["--dangerously-skip-permissions", "--print", content, "--print-timeout", "24h"]
     if model:
         args.extend(["--model", clean_model_name(model)])
     result_text = await run_agy(*args, stream_queue=stream_queue, thread_id=thread_id, cwd=cwd)
@@ -364,7 +364,7 @@ async def agy_send_message(
     thread_id: str = None,
     cwd: str = None,
 ) -> str:
-    args = ["--dangerously-skip-permissions", "--print", content, "--conversation", conv_id]
+    args = ["--dangerously-skip-permissions", "--print", content, "--conversation", conv_id, "--print-timeout", "24h"]
     if model:
         args.extend(["--model", clean_model_name(model)])
     return await run_agy(*args, stream_queue=stream_queue, thread_id=thread_id, cwd=cwd)
