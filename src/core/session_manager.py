@@ -20,6 +20,9 @@ class SessionManager:
         # conv_id -> current approval_key. Keyed by approval_key (not conv_id)
         # so a 2nd call can't overwrite the 1st's still-pending Future.
         self.active_approval_by_conv: dict[str, str] = {}
+        # Same, but keyed by the platform session id - needed because a brand-new session's
+        # conv_id isn't known to us until its first turn fully finishes (see set_pending_approval).
+        self.active_approval_by_thread: dict[str, str] = {}
 
         self.persistent_allowed: dict = self._load_persistent()
 
@@ -119,12 +122,19 @@ class SessionManager:
         self.active_tts_tasks.pop(str(thread_id), None)
 
     def set_pending_approval(
-        self, approval_key: str, future: asyncio.Future, app_type: str = "tool", conv_id: str | None = None
+        self,
+        approval_key: str,
+        future: asyncio.Future,
+        app_type: str = "tool",
+        conv_id: str | None = None,
+        thread_id: str | None = None,
     ):
         self.pending_approvals[approval_key] = future
         self.pending_approval_types[approval_key] = app_type
         if conv_id:
             self.active_approval_by_conv[conv_id] = approval_key
+        if thread_id:
+            self.active_approval_by_thread[thread_id] = approval_key
 
     def get_pending_approval_by_conv(self, conv_id: str) -> asyncio.Future | None:
         """Looks up whichever approval is CURRENTLY active for a given
@@ -136,8 +146,22 @@ class SessionManager:
             return None
         return self.pending_approvals.get(approval_key)
 
+    def get_pending_approval_by_thread(self, thread_id: str) -> asyncio.Future | None:
+        """Same as get_pending_approval_by_conv, but keyed by the platform session id - use this
+        for a session that might still be "pending" (conv_id not assigned yet)."""
+        approval_key = self.active_approval_by_thread.get(thread_id)
+        if not approval_key:
+            return None
+        return self.pending_approvals.get(approval_key)
+
     def get_pending_approval_type_by_conv(self, conv_id: str) -> str:
         approval_key = self.active_approval_by_conv.get(conv_id)
+        if not approval_key:
+            return "tool"
+        return self.pending_approval_types.get(approval_key, "tool")
+
+    def get_pending_approval_type_by_thread(self, thread_id: str) -> str:
+        approval_key = self.active_approval_by_thread.get(thread_id)
         if not approval_key:
             return "tool"
         return self.pending_approval_types.get(approval_key, "tool")
@@ -146,8 +170,11 @@ class SessionManager:
         self.pending_approvals.pop(approval_key, None)
         self.pending_approval_types.pop(approval_key, None)
         self.pending_approval_messages.pop(approval_key, None)
-        # Only remove the conv_id pointer if it still points at THIS key -
+        # Only remove the conv_id/thread_id pointer if it still points at THIS key -
         # a newer call may have already overwritten it.
         for conv, key in list(self.active_approval_by_conv.items()):
             if key == approval_key:
                 del self.active_approval_by_conv[conv]
+        for thread, key in list(self.active_approval_by_thread.items()):
+            if key == approval_key:
+                del self.active_approval_by_thread[thread]

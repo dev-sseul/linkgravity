@@ -22,8 +22,15 @@ from utils.utils import (
 async def handle_approval_reply(incoming: IncomingMessage, session: dict, content: str, pa) -> bool:
     adapter = get_adapter_for_platform(incoming.platform)
     thread = incoming.conversation_ref
+    conv_id = session.get("conversation_id")
+    # Brand-new session: conv_id isn't assigned yet, so fall back to the platform-keyed lookup.
+    approval_type = (
+        session_manager.get_pending_approval_type_by_conv(conv_id)
+        if conv_id
+        else session_manager.get_pending_approval_type_by_thread(incoming.conversation_id)
+    )
 
-    if session_manager.get_pending_approval_type_by_conv(incoming.conversation_id) == "ask_question":
+    if approval_type == "ask_question":
         pa.set_result(content)
         await adapter.send_message(thread, f'✅ *Answer Received (Write in): "{content}"*')
         return True
@@ -166,14 +173,19 @@ async def handle_thread_reply(bot, incoming: IncomingMessage):
 
     agy_content = build_content_with_images(content, image_paths)
     conv_id = session.get("conversation_id")
-    pa = session_manager.get_pending_approval_by_conv(conv_id) if conv_id else None
+    # Brand-new session: conv_id isn't assigned until the first turn fully finishes, so fall back to platform id.
+    pa = (
+        session_manager.get_pending_approval_by_conv(conv_id)
+        if conv_id
+        else session_manager.get_pending_approval_by_thread(incoming.conversation_id)
+    )
 
-    if conv_id and pa and not pa.done():
+    if pa and not pa.done():
         handled = await handle_approval_reply(incoming, session, content, pa)
         if handled:
             return
 
-    has_pending_approval = bool(conv_id and pa and not pa.done())
+    has_pending_approval = bool(pa and not pa.done())
     if session_manager.get_queue(incoming.conversation_id) is not None and not has_pending_approval:
         from core.agy_runner import stop_active_process
 
