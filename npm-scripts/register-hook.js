@@ -20,7 +20,7 @@ const HOOK_REGISTRATIONS = [
         eventType: 'PreToolUse',
         name: 'discord-approval',
         fileName: 'hook.js',
-        defaultTimeout: 3600,
+        defaultTimeout: 86400,
         wrapInMatcher: true,
     },
     {
@@ -130,7 +130,7 @@ function removeRetiredHooks(config) {
     return removedAny;
 }
 
-function registerHook({ allowFirstTimeCreate = true, quiet = false } = {}) {
+function registerHook({ allowFirstTimeCreate = true, quiet = false, resetTimeouts = false } = {}) {
     const config = loadHooksConfig();
     config.hooks = config.hooks || {};
 
@@ -180,19 +180,34 @@ function registerHook({ allowFirstTimeCreate = true, quiet = false } = {}) {
             hookEntry.command = command;
             console.log(`🔗 Registered agy ${reg.eventType} hook '${reg.name}' -> ${scriptPath}`);
             wroteChange = true;
-        } else if (hookEntry.command !== command) {
-            backupBeforeFirstChange();
-            console.log(
-                `🔗 Fixing agy ${reg.eventType} hook '${reg.name}' in ${hooksJsonPath}` +
-                    (backedUp ? ` (previous version backed up to ${hooksJsonPath}.bak)` : '') +
-                    `:\n   was: ${hookEntry.command}\n   now: ${command}`,
-            );
-            hookEntry.command = command;
-            wroteChange = true;
-        } else if (!quiet) {
-            console.log(
-                `🔗 agy ${reg.eventType} hook '${reg.name}' already up to date -> ${scriptPath}`,
-            );
+        } else {
+            let changedThisEntry = false;
+            if (hookEntry.command !== command) {
+                backupBeforeFirstChange();
+                console.log(
+                    `🔗 Fixing agy ${reg.eventType} hook '${reg.name}' in ${hooksJsonPath}` +
+                        (backedUp ? ` (previous version backed up to ${hooksJsonPath}.bak)` : '') +
+                        `:\n   was: ${hookEntry.command}\n   now: ${command}`,
+                );
+                hookEntry.command = command;
+                changedThisEntry = true;
+            }
+            // Only setup resets timeout - a passive `update` must not clobber a user-customized value.
+            if (resetTimeouts && hookEntry.timeout !== reg.defaultTimeout) {
+                backupBeforeFirstChange();
+                console.log(
+                    `🔗 Resetting agy ${reg.eventType} hook '${reg.name}' timeout: ${hookEntry.timeout}s -> ${reg.defaultTimeout}s`,
+                );
+                hookEntry.timeout = reg.defaultTimeout;
+                changedThisEntry = true;
+            }
+            if (changedThisEntry) {
+                wroteChange = true;
+            } else if (!quiet) {
+                console.log(
+                    `🔗 agy ${reg.eventType} hook '${reg.name}' already up to date -> ${scriptPath}`,
+                );
+            }
         }
     }
 
