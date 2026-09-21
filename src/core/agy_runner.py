@@ -208,13 +208,6 @@ async def run_agy(
                             stdout_chunks.append(clean)
                             if stream_queue is not None:
                                 await stream_queue.put((clean, False))
-                                if (
-                                    "(Calls tool:" in clean
-                                    or "Tool Output:" in clean
-                                    or "Tool Execute:" in clean
-                                    or clean.startswith("● ")
-                                ):
-                                    await stream_queue.put(("__SPLIT__", True))
 
                 async def read_stderr():
                     while True:
@@ -229,7 +222,7 @@ async def run_agy(
                 gather_task = asyncio.create_task(_gather_pipes())
                 wait_task = asyncio.create_task(proc.wait())
 
-                # Slices let the timeout pause indefinitely while any approval is pending (hooks/hook.js waits up to 24h).
+                # Slices let the timeout pause while an approval is pending (hook.js waits up to 24h).
                 from config import session_manager as _sm
 
                 poll_slice = 5.0
