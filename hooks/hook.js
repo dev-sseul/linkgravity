@@ -9,7 +9,7 @@ const LGY_CONFIG_FILE = path.join(os.homedir(), '.gemini', 'linkgravity', 'lgy.j
 // Not "localhost" - the server binds 127.0.0.1 and node resolves localhost to ::1 first.
 const APPROVE_HOST = '127.0.0.1';
 const APPROVE_PORT = 18080;
-const TIMEOUT_MS = 3600 * 1000;
+const TIMEOUT_MS = 86400 * 1000;
 
 function emit(payload) {
     // Exits explicitly: the keep-alive socket and its hour-long timer stay open after the
