@@ -14,6 +14,7 @@ class SessionManager:
         self.sessions: dict[str, dict] = self._load_sessions()
         self.active_queues: dict[str, asyncio.Queue] = {}
         self.active_tts_tasks: dict[str, asyncio.Task] = {}
+        self.active_handler_tasks: dict[str, asyncio.Task] = {}
         self.pending_approvals: dict[str, asyncio.Future] = {}
         self.pending_approval_types: dict[str, str] = {}
         self.pending_approval_messages: dict[str, Any] = {}
@@ -120,6 +121,15 @@ class SessionManager:
 
     def remove_tts_task(self, thread_id: str):
         self.active_tts_tasks.pop(str(thread_id), None)
+
+    def get_handler_task(self, thread_id: str) -> asyncio.Task | None:
+        return self.active_handler_tasks.get(str(thread_id))
+
+    def set_handler_task(self, thread_id: str, task: asyncio.Task):
+        self.active_handler_tasks[str(thread_id)] = task
+
+    def remove_handler_task(self, thread_id: str):
+        self.active_handler_tasks.pop(str(thread_id), None)
 
     def set_pending_approval(
         self,

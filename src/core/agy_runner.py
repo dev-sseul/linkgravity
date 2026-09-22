@@ -344,7 +344,7 @@ async def agy_new_conversation(
     args = ["--dangerously-skip-permissions", "--print", content, "--print-timeout", "24h"]
     if model:
         args.extend(["--model", clean_model_name(model)])
-    result_text = await run_agy(*args, stream_queue=stream_queue, thread_id=thread_id, cwd=cwd)
+    result_text = await run_agy(*args, timeout=86400, stream_queue=stream_queue, thread_id=thread_id, cwd=cwd)
     conv_id = await _get_latest_conversation_id()
     return result_text, conv_id
 
@@ -360,7 +360,7 @@ async def agy_send_message(
     args = ["--dangerously-skip-permissions", "--print", content, "--conversation", conv_id, "--print-timeout", "24h"]
     if model:
         args.extend(["--model", clean_model_name(model)])
-    return await run_agy(*args, stream_queue=stream_queue, thread_id=thread_id, cwd=cwd)
+    return await run_agy(*args, timeout=86400, stream_queue=stream_queue, thread_id=thread_id, cwd=cwd)
 
 
 def get_current_model() -> str:

@@ -133,6 +133,17 @@ async def handle_existing_session(
         cleanup_images(image_paths)
 
 
+async def _run_tracked(thread_id: str, coro) -> None:
+    # Registered so /stop can cancel the whole turn, not just the agy process.
+    task = asyncio.current_task()
+    session_manager.set_handler_task(thread_id, task)
+    try:
+        await coro
+    finally:
+        if session_manager.get_handler_task(thread_id) is task:
+            session_manager.remove_handler_task(thread_id)
+
+
 async def handle_thread_reply(bot, incoming: IncomingMessage):
     session = session_manager.get_session(incoming.conversation_id)
     if not session:
@@ -202,10 +213,16 @@ async def handle_thread_reply(bot, incoming: IncomingMessage):
 
     if not conv_id:
         if session.get("status") == "pending":
-            await handle_pending_session(bot, incoming, session, agy_content, content, image_paths)
+            await _run_tracked(
+                incoming.conversation_id,
+                handle_pending_session(bot, incoming, session, agy_content, content, image_paths),
+            )
             return
         else:
             await adapter.send_message(thread, "⚠️ Session ID not found. Start a new session with `/new`.")
             return
 
-    await handle_existing_session(bot, incoming, session, conv_id, agy_content, image_paths)
+    await _run_tracked(
+        incoming.conversation_id,
+        handle_existing_session(bot, incoming, session, conv_id, agy_content, image_paths),
+    )
