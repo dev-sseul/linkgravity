@@ -25,3 +25,4 @@ build/
 *.egg-info/
 .python-version
 .ruff_cache/
+core.[0-9]*

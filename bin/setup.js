@@ -484,9 +484,13 @@ async function runSetup() {
             p.cancel('Setup cancelled.');
             process.exit(0);
         }
-        if (consent) registerHook({ allowFirstTimeCreate: true });
+        if (consent) {
+            registerHook({ allowFirstTimeCreate: true, resetTimeouts: true });
+            require('../npm-scripts/register-mcp')({ quiet: true });
+        }
     } else {
-        registerHook({ allowFirstTimeCreate: false, quiet: true });
+        registerHook({ allowFirstTimeCreate: false, quiet: true, resetTimeouts: true });
+        require('../npm-scripts/register-mcp')({ quiet: true });
     }
 
     while (true) {
