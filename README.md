@@ -10,7 +10,8 @@ A Discord, Telegram, and Slack bot interface for the Antigravity agentic AI syst
 - **Approval Flow:** Command and tool-call approvals become interactive chat buttons. Chained shell commands are approved individually, and any approval can be scoped to auto-allow that command or tool going forward - something plain `agy` doesn't do.
 - **Voice Interaction:** Talk to the agent from a Discord voice channel and hear its replies. Say your wake word to get its attention, so side conversation in the channel doesn't set it off.
 - **Multi-Modal Input:** Attach files for the AI to read, including audio, which gets transcribed to text automatically.
-- **Schedules:** Ask the agent to do something later or on repeat ("every 3 days at 9", "weekdays at 9", "in 30 minutes"). It runs in the same thread, so you can reply to the result. When one is created you pick, with buttons, where results go (this chat, or an allowed DM/channel on any connected messenger) and how approvals are handled while you're away (`readonly`, `ask`, or `auto`); `/schedules` lists, pauses, or deletes them.
+- **Files Back to You:** Ask for something as a file ("send me that as a PDF") and the agent posts it as a real attachment in the chat.
+- **Schedules:** Ask the agent to do something later or on repeat ("every 3 days at 9", "weekdays at 9", "in 30 minutes"), and manage them the same way ("what's scheduled?", "stop the dust alerts"). They run in the same thread, so you can reply to the result, and checks with nothing to report ("tell me if it rains") stay silent. When one is created you pick with buttons where results go (this chat, or an allowed DM/channel on any connected messenger), which model runs it, and how approvals are handled while you're away. `/schedules` lists, pauses, or deletes them.
 - **Tables:** Messengers don't render markdown tables, so tables in a reply are sent as an image, with CSV and Markdown copies attached.
 - **Same Agent as Your Terminal:** Reads the `agy` setup already on the machine, so sessions started from chat use the same models and settings you use locally.
 
@@ -23,6 +24,7 @@ A Discord, Telegram, and Slack bot interface for the Antigravity agentic AI syst
 | Approval buttons          | ✓       | ✓        | ✓       |
 | File attachments          | ✓       | ✓        | ✓       |
 | Session title auto-rename | ✓       | ✗        | ✓       |
+| Schedules                 | ✓       | ✓        | ✓       |
 | DMs                       | ✓       | ✓        | ✓       |
 | Group                     | ✓       | ✗        | ✓       |
 
@@ -127,4 +129,5 @@ This bot gives an AI agent broad access to the machine it runs on - **that's inh
 
 - The allowed-users list for each platform, set via `lgy setup`, is your primary access control - always set it.
 - Tool calls, including shell commands, go through an approval flow by default; treat anyone on an allowed-users list as having effectively full control of this machine.
+- Schedules run while nobody is watching. `readonly` only lets through read-only tools and commands (search, view files, `ls`, `docker ps`, ...), even with `/automode` on; `auto` allows everything except LinkGravity's own config.
 - Your bot tokens and other settings live in `~/.gemini/linkgravity/lgy.json`, outside this repo/package directory - never commit or share that file.
