@@ -16,6 +16,7 @@ from telegram.ext import ContextTypes
 
 from config import allowed, logger
 from messengers.base import (
+    Destination,
     IncomingAttachment,
     IncomingMessage,
     MessengerAdapter,
@@ -358,6 +359,55 @@ class TelegramAdapter(MessengerAdapter):
 
     def create_permission_list(self, on_revoke) -> PermissionListHandle:
         return _TelegramPermissionList(self.bot, self._callbacks, on_revoke)
+
+    def create_select_prompt(self, answer_future: asyncio.Future, question: str, options: list[str]) -> PromptHandle:
+        # Telegram has no dropdown; one button per row reads as a list. Inline keyboards cap out near 100 buttons.
+        prompt_id = uuid.uuid4().hex[:12]
+        text = f"❓ <b>{html.escape(question)}</b>"
+        shown = options[:100]
+        if len(options) > len(shown):
+            logger.warning(f"Select prompt truncated to {len(shown)} of {len(options)} options")
+        keys: list[str] = []
+
+        async def resolve(index: int, query):
+            if not answer_future.done():
+                answer_future.set_result(index)
+            handle.text = f"✅ <b>Selected: {html.escape(options[index])}</b>"
+            await query.answer()
+            await safe_query_edit(query, text=handle.text, parse_mode="HTML")
+
+        keyboard = []
+        for i, opt in enumerate(shown):
+            key = f"{prompt_id}:sel:{i}"
+            self._callbacks[key] = lambda query, i=i: resolve(i, query)
+            keys.append(key)
+            keyboard.append([InlineKeyboardButton(opt[:64], callback_data=key)])
+
+        handle = _TelegramPromptHandle(
+            self.bot, text, InlineKeyboardMarkup(keyboard), cleanup=lambda: [self._callbacks.pop(k, None) for k in keys]
+        )
+        return handle
+
+    async def list_destinations(self) -> list[Destination]:
+        from config import TELEGRAM_ALLOWED_IDS, session_manager
+
+        # The Bot API can't list chats, so these are the ones LinkGravity already knows.
+        chat_ids = list(TELEGRAM_ALLOWED_IDS)
+        for conversation_id, session in session_manager.get_all_sessions().items():
+            chat_id = self.resolve_conversation(conversation_id)
+            if session.get("platform") == "telegram" and chat_id is not None and chat_id not in chat_ids:
+                chat_ids.append(chat_id)
+        destinations = []
+        for chat_id in chat_ids:
+            try:
+                chat = await self.bot.get_chat(chat_id)
+            except TelegramError as e:
+                logger.warning(f"Couldn't look up Telegram chat {chat_id}: {e}")
+                continue
+            label = chat.title or chat.full_name or chat.username or str(chat_id)
+            kind = "dm" if chat.type == "private" else "channel"
+            destinations.append(Destination("telegram", str(chat_id), label, kind))
+        return destinations
 
     def create_question_prompt(
         self,

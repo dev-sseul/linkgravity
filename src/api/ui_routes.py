@@ -7,10 +7,16 @@ import uuid
 from aiohttp import web
 
 from api.server import is_tool_allowed
+from approval import readonly
+from approval.agy_schedule import killed_task_id, to_schedule_args
+from approval.mcp_tools import is_linkgravity_tool
 from approval.protected_paths import protected_reason
 from config import APPROVAL_TIMEOUT_SEC, MAX_EMBED_LEN, logger, session_manager
 from messengers.base import ScopeOption
 from messengers.registry import get_adapter_for_platform, get_adapter_for_thread
+from services import scheduler
+from services.schedule_spec import SpecError
+from services.schedule_spec import describe as describe_spec
 from utils.utils import split_message
 
 
@@ -69,6 +75,30 @@ def _persist_scope_if_granted(prompt_handle):
         if scope not in session_manager.persistent_allowed[kind]:
             session_manager.persistent_allowed[kind].append(scope)
             session_manager.save_persistent()
+
+
+async def _adopt_agy_schedule(thread_id: str, args: dict, tool_name: str):
+    session = session_manager.get_session(thread_id)
+    try:
+        job = await scheduler.create(thread_id, session.get("platform", "discord"), args)
+    except SpecError as e:
+        logger.warning(f"[SCHEDULE] Couldn't adopt agy's {tool_name} call, leaving it to agy: {e}")
+        return None
+    if job is None:
+        return web.json_response({"decision": "deny", "reason": "The user cancelled this schedule in the chat."})
+    logger.info(f"[SCHEDULE] Adopted agy's {tool_name} call as #{job['id']}")
+    await scheduler.announce(job, "created")
+    # Denying is the only way to stop agy's own copy; the reason tells the model the schedule already exists.
+    return web.json_response(
+        {
+            "decision": "deny",
+            "reason": (
+                f"Done - LinkGravity registered this as schedule #{job['id']} ({describe_spec(job['schedule'])}). "
+                "It runs in this chat and survives restarts, so do not create it again. "
+                "Manage it with the linkgravity MCP tools schedule_list / schedule_update / schedule_delete."
+            ),
+        }
+    )
 
 
 def _clean_inline(text: str) -> str:
@@ -130,11 +160,48 @@ async def handle_approve_request(request):
                 session_manager.update_session(target_thread_id, key, tool_name)
 
         adapter = get_adapter_for_thread(target_thread_id) if target_thread_id else get_adapter_for_platform("discord")
+        schedule_mode = scheduler.approval_mode(target_thread_id)
+        auto_mode = session_manager.is_auto_mode() or schedule_mode == "auto"
+
+        killed = scheduler.find(killed_task_id(tool_name, tool_input))
+        if killed:
+            scheduler.delete(killed["id"])
+            logger.info(f"[SCHEDULE] Adopted agy's manage_task kill as deleting #{killed['id']}")
+            await scheduler.announce(killed, "deleted")
+            return web.json_response(
+                {"decision": "deny", "reason": f"Done - LinkGravity schedule #{killed['id']} is deleted."}
+            )
+
+        adopt_args = to_schedule_args(tool_name, tool_input)
+        if adopt_args and target_thread_id and session_manager.get_session(target_thread_id):
+            adopted = await _adopt_agy_schedule(target_thread_id, adopt_args, tool_name)
+            if adopted is not None:
+                return adopted
+
+        # Decided up front so neither the global automode nor persistent grants can widen it.
+        if schedule_mode == "readonly":
+            if readonly.allows(tool_name, tool_input):
+                _set_tool_status("current_tool")
+                return allow_response(tool_name, tool_input)
+            logger.info(f"[SCHEDULE] readonly run denied {tool_name!r}")
+            return web.json_response(
+                {
+                    "decision": "deny",
+                    "reason": "This scheduled run is read-only; this action needs the user's approval.",
+                }
+            )
 
         if "ask_question" in tool_name:
             _set_tool_status("current_tool")  # no separate approval phase here - it's waiting on the user either way
             if not target_thread:
                 return web.json_response({"decision": "deny", "reason": "No target thread found."})
+            if schedule_mode == "auto":
+                return web.json_response(
+                    {
+                        "decision": "deny",
+                        "reason": "Unattended scheduled run - no one can answer. Use your best judgment.",
+                    }
+                )
 
             questions = tool_input.get("questions", [])
             if not questions:
@@ -191,7 +258,7 @@ async def handle_approve_request(request):
                 if not sub_cmd:
                     continue
 
-                is_auto_allowed = session_manager.is_auto_mode()
+                is_auto_allowed = auto_mode
                 if not is_auto_allowed and "\n" not in sub_cmd and "|" not in sub_cmd:
                     try:
                         tokens = shlex.split(sub_cmd)
@@ -265,7 +332,8 @@ async def handle_approve_request(request):
 
                 _set_tool_status("current_tool")
 
-            if target_thread and tool_msg_text and not prompted:
+            # A scheduled run can end in NO_REPLY, and echoed tool calls would break that silence.
+            if target_thread and tool_msg_text and not prompted and not schedule_mode:
                 await send_ordered(target_thread_id, lambda: _send_chunked(adapter, target_thread, tool_msg_formatted))
 
             if not prompted:
@@ -274,14 +342,17 @@ async def handle_approve_request(request):
             return allow_response(tool_name, tool_input)
 
         else:
-            if session_manager.is_auto_mode() or is_tool_allowed(tool_name, tool_input):
-                if target_thread and tool_msg_text:
+            # The daemon asks the user itself before saving a schedule, so a tool prompt here would be a second one.
+            self_confirmed = any(
+                is_linkgravity_tool(tool_name, tool_input, t) for t in ("schedule_create", "schedule_list")
+            )
+            if auto_mode or self_confirmed or is_tool_allowed(tool_name, tool_input):
+                if target_thread and tool_msg_text and not schedule_mode:
                     await send_ordered(
                         target_thread_id, lambda: _send_chunked(adapter, target_thread, tool_msg_formatted)
                     )
                 _set_tool_status("current_tool")  # auto-allowed - runs immediately, no approval wait
                 return allow_response(tool_name, tool_input)
-
             approval_key = f"{conv_id}:{uuid.uuid4().hex}"
             future = asyncio.get_running_loop().create_future()
             session_manager.set_pending_approval(approval_key, future, conv_id=conv_id)

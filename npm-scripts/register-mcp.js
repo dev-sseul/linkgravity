@@ -11,6 +11,8 @@ const NODE_CMD = 'node';
 const SERVER_NAME = 'linkgravity';
 const FILE_NAME = 'linkgravity_mcp.js';
 const installedMcpDir = path.join(workspaceDir, 'mcp');
+// agy cuts MCP tool calls off after 3 minutes by default, and schedule_create waits for the user's button picks.
+const CALL_TIMEOUT_SEC = 86400;
 
 function installMcpScript() {
     const source = fs.readFileSync(path.join(repoRoot, 'mcp', FILE_NAME), 'utf8');
@@ -55,12 +57,13 @@ function registerMcp({ quiet = false } = {}) {
     }
 
     config.mcpServers = config.mcpServers || {};
-    const desired = { command: NODE_CMD, args: [installedPath] };
+    const desired = { command: NODE_CMD, args: [installedPath], timeoutSeconds: CALL_TIMEOUT_SEC };
     const existing = config.mcpServers[SERVER_NAME];
     if (
         existing &&
         existing.command === desired.command &&
-        JSON.stringify(existing.args) === JSON.stringify(desired.args)
+        JSON.stringify(existing.args) === JSON.stringify(desired.args) &&
+        existing.timeoutSeconds === desired.timeoutSeconds
     ) {
         if (!quiet)
             console.log(

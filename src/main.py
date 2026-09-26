@@ -64,6 +64,10 @@ async def main():
     # One shared webhook server for every enabled platform - agy always calls this same fixed port.
     asyncio.create_task(server.setup_webhook_server(discord_bot))
 
+    from services import scheduler
+
+    asyncio.create_task(scheduler.run_loop())
+
     stop_event = asyncio.Event()
 
     def _handle_sigterm():

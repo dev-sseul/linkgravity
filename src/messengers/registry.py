@@ -11,6 +11,10 @@ def register_adapter(platform: str, adapter: MessengerAdapter) -> None:
     _adapters[platform] = adapter
 
 
+def registered_platforms() -> list[str]:
+    return list(_adapters)
+
+
 def get_adapter_for_platform(platform: str) -> MessengerAdapter:
     if platform not in _adapters:
         raise RuntimeError(f"No adapter registered for platform {platform!r} - is it enabled in lgy.json?")

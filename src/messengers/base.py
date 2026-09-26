@@ -10,7 +10,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from typing import Any, NamedTuple
+from typing import Any, Literal, NamedTuple
 
 
 @dataclass
@@ -62,6 +62,14 @@ class PermissionListHandle(ABC):
     @abstractmethod
     async def send(self, conversation_ref: Any) -> Any:
         raise NotImplementedError
+
+
+class Destination(NamedTuple):
+    platform: str
+    conversation_id: str
+    label: str
+    kind: Literal["dm", "channel"]
+    server: str | None = None
 
 
 class PhotoLimits(NamedTuple):
@@ -139,6 +147,16 @@ class MessengerAdapter(ABC):
 
     @abstractmethod
     def create_permission_list(self, on_revoke: Callable[[PermissionEntry], Awaitable[None]]) -> PermissionListHandle:
+        raise NotImplementedError
+
+    @abstractmethod
+    def create_select_prompt(self, answer_future, question: str, options: list[str]) -> PromptHandle:
+        # answer_future gets the chosen index, not the label: labels (channel names) can repeat.
+        raise NotImplementedError
+
+    @abstractmethod
+    async def list_destinations(self) -> list[Destination]:
+        # Only chats already allowed in lgy.json or with a session, so a schedule can't be aimed anywhere else.
         raise NotImplementedError
 
     @abstractmethod

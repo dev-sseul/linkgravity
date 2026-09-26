@@ -16,6 +16,7 @@ _STDOUT_BUFFER_SIZE = 65536
 # Returned as ordinary output, not raised - callers that need to distinguish failure from a
 # real answer have to compare against this.
 TIMEOUT_MESSAGE = "🛑 AI Task timed out."
+EMPTY_RESPONSE = "(Empty response)"
 
 
 @functools.lru_cache(maxsize=1)
@@ -284,7 +285,7 @@ async def run_agy(
                     return error_msg
 
                 logger.debug(f"[AGY RAW STDOUT] {text!r}")
-                return text or "(Empty response)"
+                return text or EMPTY_RESPONSE
 
             except asyncio.CancelledError:
                 try:

@@ -10,6 +10,7 @@ A Discord, Telegram, and Slack bot interface for the Antigravity agentic AI syst
 - **Approval Flow:** Command and tool-call approvals become interactive chat buttons. Chained shell commands are approved individually, and any approval can be scoped to auto-allow that command or tool going forward - something plain `agy` doesn't do.
 - **Voice Interaction:** Talk to the agent from a Discord voice channel and hear its replies. Say your wake word to get its attention, so side conversation in the channel doesn't set it off.
 - **Multi-Modal Input:** Attach files for the AI to read, including audio, which gets transcribed to text automatically.
+- **Schedules:** Ask the agent to do something later or on repeat ("every 3 days at 9", "weekdays at 9", "in 30 minutes"). It runs in the same thread, so you can reply to the result. When one is created you pick, with buttons, where results go (this chat, or an allowed DM/channel on any connected messenger) and how approvals are handled while you're away (`readonly`, `ask`, or `auto`); `/schedules` lists, pauses, or deletes them.
 - **Tables:** Messengers don't render markdown tables, so tables in a reply are sent as an image, with CSV and Markdown copies attached.
 - **Same Agent as Your Terminal:** Reads the `agy` setup already on the machine, so sessions started from chat use the same models and settings you use locally.
 
@@ -61,7 +62,7 @@ Slack has more moving parts than the others - two separate tokens, and a few set
     - It's easy to grab the wrong token here - the page also shows a **User OAuth Token** (`xoxp-...`) further down, which is a different thing and won't work for this bot.
 5. **App Home** (left sidebar) > under **Show Tabs**, turn on **Messages Tab**, then check **Allow users to send Slash commands and messages from the messages tab** - this is what lets you DM the bot at all. (If this section looks greyed out, it's because step 3 hasn't been saved/installed yet - go back and do that first.)
 6. **Event Subscriptions** (left sidebar) > toggle **Enable Events** on > under **Subscribe to bot events**, add `message.channels`, `message.groups`, `message.im`, and `message.mpim` > **Save Changes**.
-7. **Slash Commands** (left sidebar) > **Create New Command**, five times, for `/new`, `/model`, `/credit`, `/permissions`, and `/automode` (any description/hint text is fine - only the command name matters).
+7. **Slash Commands** (left sidebar) > **Create New Command**, six times, for `/new`, `/model`, `/credit`, `/permissions`, `/automode`, and `/schedules` (any description/hint text is fine - only the command name matters).
 8. Back on **OAuth & Permissions**, since scopes/events changed after the initial install, click **Reinstall to Workspace** to push those changes live. Any time you change scopes or events later, you'll need to repeat this step.
 9. In Slack itself, for any **channel** (not DM) you want the bot usable in, run `/invite @<your bot's name>` there first - the bot can't post in a channel it hasn't been added to.
 

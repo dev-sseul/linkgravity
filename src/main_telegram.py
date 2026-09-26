@@ -162,6 +162,18 @@ async def cmd_permissions(update: Update, context) -> None:
     await handle.send(update.effective_chat.id)
 
 
+async def cmd_schedules(update: Update, context) -> None:
+    if not allowed(update.effective_user.id, "telegram"):
+        await update.message.reply_text("❌ Denied")
+        return
+
+    from services import scheduler
+
+    adapter: TelegramAdapter = context.bot_data["adapter"]
+    chat_id = update.effective_chat.id
+    await adapter.send_message(chat_id, await scheduler.chat_command(" ".join(context.args or []), str(chat_id)))
+
+
 async def cmd_automode(update: Update, context) -> None:
     user = update.effective_user
     if not allowed(user.id, "telegram"):
@@ -252,6 +264,7 @@ async def on_ready(app: Application) -> None:
             BotCommand("credit", "Turn AI Credits on/off"),
             BotCommand("permissions", "View and remove allowed tools and commands"),
             BotCommand("automode", "Auto-allow every approval globally (on/off)"),
+            BotCommand("schedules", "List schedules, or delete/pause/resume/run one by id"),
         ]
     )
     logger.info(f"✅ Bot is fully online and ready! Logged in as @{app.bot.username}")
@@ -268,6 +281,7 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("credit", cmd_credit))
     app.add_handler(CommandHandler("permissions", cmd_permissions))
     app.add_handler(CommandHandler("automode", cmd_automode))
+    app.add_handler(CommandHandler("schedules", cmd_schedules))
     app.add_handler(CallbackQueryHandler(adapter.handle_callback_query))
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, on_message))
     app.add_error_handler(on_error)

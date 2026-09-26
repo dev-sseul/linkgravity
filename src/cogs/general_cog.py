@@ -290,6 +290,17 @@ class GeneralCog(commands.Cog):
         msg = permissions.set_auto_mode(state.lower() == "on")
         await interaction.response.send_message(msg)
 
+    @app_commands.command(name="schedules", description="List schedules, or delete/pause/resume/run one by id")
+    @app_commands.describe(command="Empty to list, or e.g. `delete a1b2c3`")
+    async def cmd_schedules(self, interaction: discord.Interaction, command: str = ""):
+        if not allowed(interaction.user.id):
+            return await interaction.response.send_message("❌ Denied", ephemeral=True)
+
+        from services import scheduler
+
+        reply = await scheduler.chat_command(command, str(interaction.channel_id))
+        await interaction.response.send_message(reply[:2000])
+
     @app_commands.command(
         name="stop", description="Stop the currently generating response or task (Equivalent to ESC in CLI)"
     )

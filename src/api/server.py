@@ -33,6 +33,7 @@ async def setup_webhook_server(bot):
     app["bot"] = bot
 
     from api.attach_routes import handle_attach
+    from api.schedule_routes import handle_schedule
     from api.ui_routes import handle_approve_request
     from api.voice_routes import (
         handle_enroll_sample,
@@ -44,6 +45,7 @@ async def setup_webhook_server(bot):
 
     app.router.add_post("/approve", handle_approve_request)
     app.router.add_post("/attach", handle_attach)
+    app.router.add_post("/schedule", handle_schedule)
     app.router.add_post("/stt_input", handle_stt_input)
     app.router.add_post("/tts_finished", handle_tts_finished)
     app.router.add_post("/stt_partial", handle_stt_partial)

@@ -9,6 +9,7 @@ import discord
 
 from config import allowed, logger
 from messengers.base import (
+    Destination,
     IncomingAttachment,
     IncomingMessage,
     MessengerAdapter,
@@ -278,6 +279,63 @@ class DiscordAdapter(MessengerAdapter):
 
     def create_permission_list(self, on_revoke) -> PermissionListHandle:
         return _DiscordPermissionList(on_revoke)
+
+    def create_select_prompt(self, answer_future: asyncio.Future, question: str, options: list[str]) -> PromptHandle:
+        embed = discord.Embed(title="❓ Choose one", description=f"**{question}**", color=discord.Color.blue())
+        view = _ErrorLoggingView(timeout=None)
+        handle = _DiscordPromptHandle(embed, view)
+        # A Select holds 25 options and a message 5 of them.
+        shown = options[:125]
+        if len(options) > len(shown):
+            logger.warning(f"Select prompt truncated to {len(shown)} of {len(options)} options")
+        for start in range(0, len(shown), 25):
+            chunk = shown[start : start + 25]
+            placeholder = "Choose..." if len(shown) <= 25 else f"Choose... ({start + 1}-{start + len(chunk)})"
+            select = discord.ui.Select(
+                placeholder=placeholder,
+                options=[discord.SelectOption(label=opt[:100], value=str(start + i)) for i, opt in enumerate(chunk)],
+            )
+
+            async def callback(interaction: discord.Interaction, select=select):
+                index = int(select.values[0])
+                await interaction.response.send_message(f"✅ Selected: **{options[index]}**")
+                if not answer_future.done():
+                    answer_future.set_result(index)
+                for child in view.children:
+                    child.disabled = True
+                if interaction.message:
+                    try:
+                        await interaction.message.edit(view=view)
+                    except discord.HTTPException:
+                        pass
+
+            select.callback = callback
+            view.add_item(select)
+        return handle
+
+    async def list_destinations(self) -> list[Destination]:
+        from config import ALLOWED_IDS, SESSION_SCOPES
+
+        destinations = []
+        for user_id in ALLOWED_IDS:
+            try:
+                user = self.bot.get_user(user_id) or await self.bot.fetch_user(user_id)
+                dm = user.dm_channel or await user.create_dm()
+            except discord.HTTPException as e:
+                logger.warning(f"Couldn't open a Discord DM with {user_id}: {e}")
+                continue
+            destinations.append(Destination("discord", str(dm.id), f"{user.display_name} (DM)", "dm"))
+        for guild_id, channel_ids in SESSION_SCOPES.items():
+            guild = self.bot.get_guild(guild_id)
+            if guild is None:
+                continue
+            for channel in guild.text_channels:
+                if channel_ids is not None and channel.id not in channel_ids:
+                    continue
+                if not channel.permissions_for(guild.me).send_messages:
+                    continue
+                destinations.append(Destination("discord", str(channel.id), f"#{channel.name}", "channel", guild.name))
+        return destinations
 
     def create_question_prompt(
         self,

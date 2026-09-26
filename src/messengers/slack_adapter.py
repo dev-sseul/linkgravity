@@ -14,6 +14,7 @@ from slack_sdk.web.async_client import AsyncWebClient
 
 from config import allowed, logger, session_manager
 from messengers.base import (
+    Destination,
     IncomingAttachment,
     IncomingMessage,
     MessengerAdapter,
@@ -456,6 +457,66 @@ class SlackAdapter(MessengerAdapter):
 
     def create_permission_list(self, on_revoke) -> PermissionListHandle:
         return _SlackPermissionList(self.client, self._callbacks, on_revoke)
+
+    def create_select_prompt(self, answer_future: asyncio.Future, question: str, options: list[str]) -> PromptHandle:
+        prompt_id = uuid.uuid4().hex[:12]
+        text = f"❓ *{question}*"
+        blocks = [{"type": "section", "text": {"type": "mrkdwn", "text": text[:2990]}}]
+        keys: list[str] = []
+
+        async def on_select(body: dict, client: AsyncWebClient):
+            index = int(body["actions"][0]["selected_option"]["value"])
+            if not answer_future.done():
+                answer_future.set_result(index)
+            handle.text = f"✅ *Selected: {options[index]}*"
+            handle.blocks = [{"type": "section", "text": {"type": "mrkdwn", "text": handle.text}}]
+            await handle.finalize()
+
+        # static_select holds 100 options; more spill into extra menus in the same actions block.
+        elements = []
+        for start in range(0, len(options[:2500]), 100):
+            key = f"{prompt_id}:sel:{start}"
+            self._callbacks[key] = on_select
+            keys.append(key)
+            elements.append(
+                {
+                    "type": "static_select",
+                    "action_id": key,
+                    "placeholder": {"type": "plain_text", "text": "Choose..."},
+                    "options": [
+                        {"text": {"type": "plain_text", "text": opt[:75]}, "value": str(start + i)}
+                        for i, opt in enumerate(options[start : start + 100])
+                    ],
+                }
+            )
+        blocks.append({"type": "actions", "elements": elements})
+
+        handle = _SlackPromptHandle(
+            self.client, text, blocks, cleanup=lambda: [self._callbacks.pop(k, None) for k in keys]
+        )
+        return handle
+
+    async def list_destinations(self) -> list[Destination]:
+        # Built from past sessions rather than conversations.list, which would need extra OAuth scopes.
+        channels: dict[str, bool] = {}
+        for conversation_id, session in session_manager.get_all_sessions().items():
+            decoded = decode_conversation_id(conversation_id) if session.get("platform") == "slack" else None
+            if decoded:
+                channel, thread_ts = decoded
+                channels[channel] = channels.get(channel, False) or thread_ts == channel
+        destinations = []
+        for channel, is_dm in channels.items():
+            label = channel
+            try:
+                info = (await self.client.conversations_info(channel=channel))["channel"]
+                is_dm = is_dm or info.get("is_im", False)
+                label = "DM" if info.get("is_im") else f"#{info.get('name', channel)}"
+            except SlackApiError as e:
+                logger.debug(f"conversations.info failed for {channel}: {e}")
+            # thread_ts == channel is the existing "no thread" sentinel, so posts land top-level.
+            conversation_id = encode_conversation_id(channel, channel)
+            destinations.append(Destination("slack", conversation_id, label, "dm" if is_dm else "channel"))
+        return destinations
 
     def create_question_prompt(
         self,
