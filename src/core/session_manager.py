@@ -128,6 +128,9 @@ class SessionManager:
     def set_handler_task(self, thread_id: str, task: asyncio.Task):
         self.active_handler_tasks[str(thread_id)] = task
 
+    def running_handler_tasks(self) -> list[asyncio.Task]:
+        return [t for t in self.active_handler_tasks.values() if not t.done()]
+
     def remove_handler_task(self, thread_id: str):
         self.active_handler_tasks.pop(str(thread_id), None)
 

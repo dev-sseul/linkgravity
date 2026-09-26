@@ -450,6 +450,9 @@ function startDaemon() {
         '--name',
         LGY_PM2_NAME,
         '--update-env',
+        // The default 1.6s isn't enough to interrupt running turns and post that before disconnecting.
+        '--kill-timeout',
+        '10000',
     ]);
 }
 

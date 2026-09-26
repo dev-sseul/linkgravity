@@ -26,6 +26,22 @@ async def _run_platform_isolated(platform: str, coro) -> None:
         platform_health.set_status(platform, "error", detail=str(e))
 
 
+# pm2 only waits kill_timeout before SIGKILL, so this has to fit inside it (bin/cli.js sets 10s).
+TURN_DRAIN_SEC = 5
+
+
+async def _interrupt_turns() -> None:
+    from core import agy_runner
+
+    agy_runner.shutting_down = True
+    turns = session_manager.running_handler_tasks()
+    for turn in turns:
+        turn.cancel()
+    if turns:
+        logger.info(f"Interrupting {len(turns)} running turn(s) before shutdown")
+        await asyncio.wait(turns, timeout=TURN_DRAIN_SEC)
+
+
 async def main():
     removed = session_manager.cleanup_stale_sessions()
     if removed:
@@ -69,15 +85,27 @@ async def main():
     asyncio.create_task(scheduler.run_loop())
 
     stop_event = asyncio.Event()
+    stopping = []
 
-    def _handle_sigterm():
-        logger.info("Received SIGTERM (lgy stop/restart) - shutting down...")
+    async def _shutdown():
+        # Turns finish their replies while the platforms are still connected; closing first is what left
+        # half-sent answers and "Session is closed" tracebacks.
+        await _interrupt_turns()
         stop_event.set()
+
+    def _handle_stop(sig_name: str):
+        if stopping:
+            return
+        logger.info(f"Received {sig_name} (lgy stop/restart) - shutting down...")
+        stopping.append(asyncio.create_task(_shutdown()))
 
     try:
         import signal
 
-        asyncio.get_running_loop().add_signal_handler(signal.SIGTERM, _handle_sigterm)
+        loop = asyncio.get_running_loop()
+        # pm2 stops apps with SIGINT, not SIGTERM.
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            loop.add_signal_handler(sig, _handle_stop, sig.name)
     except NotImplementedError:
         pass  # add_signal_handler isn't supported on this platform (e.g. Windows)
 

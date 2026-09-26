@@ -17,6 +17,9 @@ _STDOUT_BUFFER_SIZE = 65536
 # real answer have to compare against this.
 TIMEOUT_MESSAGE = "🛑 AI Task timed out."
 EMPTY_RESPONSE = "(Empty response)"
+RESTART_MESSAGE = "🔄 Interrupted - LinkGravity is restarting. Send it again once it's back."
+# Set on daemon shutdown, so turns cut short by it aren't reported as stopped by the user or as agy crashing.
+shutting_down = False
 
 
 @functools.lru_cache(maxsize=1)
@@ -262,6 +265,10 @@ async def run_agy(
                     logger.warning(f"[AGY STDERR] {err_text}")
 
                 if proc.returncode is not None and proc.returncode != 0:
+                    if shutting_down:
+                        if stream_queue is not None:
+                            await stream_queue.put(("\n\n" + RESTART_MESSAGE, True))
+                        return RESTART_MESSAGE
                     if thread_id in _intentionally_stopped or proc.returncode in (-15, -9, 15, 9, 143, 137):
                         error_msg = "🛑 Generation stopped by user request."
                         if stream_queue is not None:
@@ -296,7 +303,7 @@ async def run_agy(
                             os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
                 except Exception:
                     pass
-                msg = "🛑 AI Task manually stopped by user."
+                msg = RESTART_MESSAGE if shutting_down else "🛑 AI Task manually stopped by user."
                 if stream_queue is not None:
                     await stream_queue.put(("\n\n" + msg, True))
                 return msg
