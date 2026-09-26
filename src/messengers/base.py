@@ -10,7 +10,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, NamedTuple
 
 
 @dataclass
@@ -64,6 +64,11 @@ class PermissionListHandle(ABC):
         raise NotImplementedError
 
 
+class PhotoLimits(NamedTuple):
+    max_ratio: int
+    max_sum: int
+
+
 class PromptHandle(ABC):
     outcome: ToolApprovalOutcome | None = None
 
@@ -97,6 +102,11 @@ class MessengerAdapter(ABC):
     @abstractmethod
     async def send_files(self, conversation_ref: Any, file_paths: list[str]) -> None:
         raise NotImplementedError
+
+    photo_limits: PhotoLimits | None = None
+
+    async def send_images(self, conversation_ref: Any, image_paths: list[str]) -> None:
+        await self.send_files(conversation_ref, image_paths)
 
     @abstractmethod
     def resolve_conversation(self, conversation_id: str) -> Any:

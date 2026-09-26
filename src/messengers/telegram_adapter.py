@@ -20,6 +20,7 @@ from messengers.base import (
     IncomingMessage,
     MessengerAdapter,
     PermissionListHandle,
+    PhotoLimits,
     PromptHandle,
     ScopeOption,
     ToolApprovalOutcome,
@@ -263,6 +264,15 @@ class TelegramAdapter(MessengerAdapter):
         for path in file_paths:
             with open(path, "rb") as f:
                 await self.bot.send_document(chat_id=conversation_ref, document=f)
+
+    # sendPhoto rejects anything over these (Bot API docs).
+    photo_limits = PhotoLimits(max_ratio=20, max_sum=10000)
+
+    async def send_images(self, conversation_ref: int, image_paths: list[str]) -> None:
+        # send_document would show the image as a file to tap open instead of inline.
+        for path in image_paths:
+            with open(path, "rb") as f:
+                await self.bot.send_photo(chat_id=conversation_ref, photo=f)
 
     def resolve_conversation(self, conversation_id: str) -> Any:
         try:

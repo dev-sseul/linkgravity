@@ -1,6 +1,7 @@
 const p = require('@clack/prompts');
 const { spawnSync } = require('child_process');
-const { daemonPython } = require('../npm-scripts/venv-paths');
+const path = require('path');
+const { daemonPython, python: venvPython, repoRoot } = require('../npm-scripts/venv-paths');
 const { PM2_BIN, PM2_CWD, pm2Env } = require('./pm2');
 const {
     getSettings,
@@ -491,6 +492,17 @@ async function runSetup() {
     } else {
         registerHook({ allowFirstTimeCreate: false, quiet: true, resetTimeouts: true });
         require('../npm-scripts/register-mcp')({ quiet: true });
+    }
+
+    // Fetched here so the first table in a chat doesn't wait on the download.
+    const font = spawnSync(venvPython, ['-m', 'services.fonts'], {
+        cwd: path.join(repoRoot, 'src'),
+        encoding: 'utf8',
+    });
+    if ((font.stdout || '').trim() !== 'ok') {
+        p.log.warn(
+            "Couldn't download the table font - tables will be sent as text until it succeeds.",
+        );
     }
 
     while (true) {

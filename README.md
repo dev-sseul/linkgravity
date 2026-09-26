@@ -10,6 +10,7 @@ A Discord, Telegram, and Slack bot interface for the Antigravity agentic AI syst
 - **Approval Flow:** Command and tool-call approvals become interactive chat buttons. Chained shell commands are approved individually, and any approval can be scoped to auto-allow that command or tool going forward - something plain `agy` doesn't do.
 - **Voice Interaction:** Talk to the agent from a Discord voice channel and hear its replies. Say your wake word to get its attention, so side conversation in the channel doesn't set it off.
 - **Multi-Modal Input:** Attach files for the AI to read, including audio, which gets transcribed to text automatically.
+- **Tables:** Messengers don't render markdown tables, so tables in a reply are sent as an image, with CSV and Markdown copies attached.
 - **Same Agent as Your Terminal:** Reads the `agy` setup already on the machine, so sessions started from chat use the same models and settings you use locally.
 
 ## Supported Platforms

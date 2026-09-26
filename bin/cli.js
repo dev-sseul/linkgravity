@@ -44,19 +44,37 @@ function info(msg) {
 }
 
 // `fresh`: npm has swapped the package on disk since require time.
-function repairHookRegistration({ fresh = false } = {}) {
-    const modulePath = require.resolve('../npm-scripts/register-hook');
+function repairAgyIntegration({ fresh = false } = {}) {
+    const hookPath = require.resolve('../npm-scripts/register-hook');
+    const mcpPath = require.resolve('../npm-scripts/register-mcp');
     if (fresh) {
-        delete require.cache[modulePath];
+        delete require.cache[hookPath];
+        delete require.cache[mcpPath];
         delete require.cache[require.resolve('../npm-scripts/venv-paths')];
     }
     try {
-        require(modulePath)({ allowFirstTimeCreate: false, quiet: true });
+        require(hookPath)({ allowFirstTimeCreate: false, quiet: true });
     } catch (err) {
         console.log(
             `${color.yellow}⚠${color.reset} Couldn't check the agy hook registration: ${err.message}`,
         );
     }
+    try {
+        require(mcpPath)({ quiet: true });
+    } catch (err) {
+        console.log(
+            `${color.yellow}⚠${color.reset} Couldn't check the agy MCP registration: ${err.message}`,
+        );
+    }
+}
+
+function prefetchTableFont() {
+    const { python, repoRoot } = require('../npm-scripts/venv-paths');
+    // Best-effort: the bot downloads it on first use anyway, this just avoids that wait.
+    spawnSync(python, ['-m', 'services.fonts'], {
+        cwd: path.join(repoRoot, 'src'),
+        stdio: 'ignore',
+    });
 }
 
 function repairShellCompletion() {
@@ -508,7 +526,7 @@ if (cmd === 'version' || cmd === '-v' || cmd === '--version') {
         require('../npm-scripts/ensure-env').ensureEnvironment();
     }
 
-    repairHookRegistration();
+    repairAgyIntegration();
 
     if (stale.length) clearRegistrations(registered);
 
@@ -727,8 +745,9 @@ if (cmd === 'version' || cmd === '-v' || cmd === '--version') {
     const latestVersion = viewResult.stdout.toString().trim();
 
     if (latestVersion === currentVersion) {
-        repairHookRegistration();
+        repairAgyIntegration();
         repairShellCompletion();
+        prefetchTableFont();
         success(`Already up to date (v${currentVersion}).\n`);
         process.exit(0);
     }
@@ -751,8 +770,9 @@ if (cmd === 'version' || cmd === '-v' || cmd === '--version') {
     // replaced this package on disk, and the copy required at startup is the pre-update one.
     delete require.cache[require.resolve('../npm-scripts/ensure-env')];
     require('../npm-scripts/ensure-env').ensureEnvironment();
-    repairHookRegistration({ fresh: true });
+    repairAgyIntegration({ fresh: true });
     repairShellCompletion();
+    prefetchTableFont();
 
     if (!procBeforeUpdate) {
         const blocker = launchBlocker();

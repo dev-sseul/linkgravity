@@ -21,6 +21,8 @@ const HOOK_REGISTRATIONS = [
         name: 'discord-approval',
         fileName: 'hook.js',
         defaultTimeout: 86400,
+        // Values we used to ship; a hook still on one was never customized, so it's safe to upgrade.
+        previousDefaults: [3600],
         wrapInMatcher: true,
     },
     {
@@ -192,8 +194,9 @@ function registerHook({ allowFirstTimeCreate = true, quiet = false, resetTimeout
                 hookEntry.command = command;
                 changedThisEntry = true;
             }
-            // Only setup resets timeout - a passive `update` must not clobber a user-customized value.
-            if (resetTimeouts && hookEntry.timeout !== reg.defaultTimeout) {
+            // A customized timeout survives passive repairs; only setup overrides it.
+            const isStaleDefault = (reg.previousDefaults || []).includes(hookEntry.timeout);
+            if ((resetTimeouts || isStaleDefault) && hookEntry.timeout !== reg.defaultTimeout) {
                 backupBeforeFirstChange();
                 console.log(
                     `🔗 Resetting agy ${reg.eventType} hook '${reg.name}' timeout: ${hookEntry.timeout}s -> ${reg.defaultTimeout}s`,
