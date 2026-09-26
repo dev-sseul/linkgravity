@@ -38,6 +38,7 @@
     "bin",
     "npm-scripts",
     "hooks",
+    "mcp",
     "src",
     "voice-service/*.js",
     "voice-service/package.json",
