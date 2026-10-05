@@ -369,8 +369,7 @@ def _is_silent(text: str) -> bool:
 
 
 async def _drain(thread_id: str, queue: asyncio.Queue) -> None:
-    # Not streamed: whether anything gets posted is only known once the answer is complete.
-    # The queue still exists so approvals stay ordered and a user message can interrupt the run.
+    # Not streamed, since posting depends on the full answer; the queue keeps approvals ordered and interruptible.
     from services.streaming import _clear_current_tool
 
     while True:
@@ -445,7 +444,6 @@ async def _run_turn(job: dict, due: datetime, session: dict, adapter, ref) -> st
             await send_agy_response(
                 target_ref, text, {**session, "platform": target["platform"]}, None, start_time, conv_id
             )
-            await adapter.send_message(ref, f"{header} → sent to {target['label']}")
             return "ok"
         await adapter.send_message(ref, f"⚠️ Couldn't reach {target['label']} - posting here instead.")
     await adapter.send_message(ref, header)
