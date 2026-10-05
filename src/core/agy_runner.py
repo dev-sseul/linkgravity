@@ -2,8 +2,13 @@ import asyncio
 import functools
 import os
 import re
+import secrets
 import signal
 import sys
+import time
+from collections.abc import Callable
+from pathlib import Path
+from typing import NamedTuple
 
 from config import logger
 
@@ -13,13 +18,57 @@ _intentionally_stopped = set()
 
 _STDOUT_BUFFER_SIZE = 65536
 
-# Returned as ordinary output, not raised - callers that need to distinguish failure from a
-# real answer have to compare against this.
+# Returned as output rather than raised, so callers compare against it to detect failure.
 TIMEOUT_MESSAGE = "🛑 AI Task timed out."
 EMPTY_RESPONSE = "(Empty response)"
 RESTART_MESSAGE = "🔄 Interrupted - LinkGravity is restarting. Send it again once it's back."
 # Set on daemon shutdown, so turns cut short by it aren't reported as stopped by the user or as agy crashing.
 shutting_down = False
+
+AGY_LOG_DIR = Path.home() / ".gemini/antigravity-cli/log"
+# agy writes its panics only to its log file and then hangs instead of exiting.
+PANIC_MARKER = b"CLI panic:"
+# Read from this run's own log: guessing from the shared brain/ folder can pick up another agy's conversation.
+CONVERSATION_RE = re.compile(rb"Print mode: conversation=([0-9a-f-]{36})")
+_LOG_OVERLAP = 128
+
+
+class LogScan(NamedTuple):
+    panic: str | None
+    conversation_id: str | None
+    offset: int
+
+
+def _new_log_path() -> Path:
+    AGY_LOG_DIR.mkdir(parents=True, exist_ok=True)
+    return AGY_LOG_DIR / f"cli-lgy-{time.strftime('%Y%m%d_%H%M%S')}-{secrets.token_hex(3)}.log"
+
+
+def _scan_log(log_path: Path, offset: int) -> LogScan:
+    # Steps back a little so a line split across two reads is still found.
+    start = max(0, offset - _LOG_OVERLAP)
+    try:
+        with open(log_path, "rb") as f:
+            f.seek(start)
+            data = f.read()
+    except OSError:
+        return LogScan(None, None, offset)
+    panic = None
+    idx = data.find(PANIC_MARKER)
+    if idx >= 0:
+        panic = data[idx:].split(b"\n", 1)[0].decode(errors="replace").strip()
+    m = CONVERSATION_RE.search(data)
+    return LogScan(panic, m.group(1).decode() if m else None, start + len(data))
+
+
+def _terminate(proc) -> None:
+    try:
+        if os.name == "nt":
+            proc.send_signal(signal.CTRL_BREAK_EVENT)
+        else:
+            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+    except Exception:
+        pass
 
 
 @functools.lru_cache(maxsize=1)
@@ -92,42 +141,13 @@ def stop_active_process(thread_id: str) -> bool:
     return True
 
 
-async def _get_latest_conversation_id() -> str:
-    try:
-        from pathlib import Path
-
-        history_dir = Path.home() / ".gemini/antigravity-cli/brain"
-        if not history_dir.exists():
-            return ""
-        dirs = [d for d in history_dir.iterdir() if d.is_dir()]
-        if not dirs:
-            return ""
-        latest = max(dirs, key=lambda x: x.stat().st_mtime)
-        return latest.name
-    except Exception:
-        return ""
-
-
-def _snapshot_conversation_dirs() -> set[str]:
-    from pathlib import Path
-
-    history_dir = Path.home() / ".gemini/antigravity-cli/brain"
-    if not history_dir.exists():
-        return set()
-    return {d.name for d in history_dir.iterdir() if d.is_dir()}
-
-
-async def _poll_new_conversation_id(before: set[str], attempts: int = 30, interval: float = 0.1) -> str:
-    for _ in range(attempts):
-        await asyncio.sleep(interval)
-        new_dirs = _snapshot_conversation_dirs() - before
-        if new_dirs:
-            return next(iter(new_dirs))
-    return ""
-
-
 async def run_agy(
-    *args, timeout: int = 300, stream_queue: asyncio.Queue = None, thread_id: str = None, cwd: str = None
+    *args,
+    timeout: int = 300,
+    stream_queue: asyncio.Queue = None,
+    thread_id: str = None,
+    cwd: str = None,
+    on_conversation: Callable[[str], None] | None = None,
 ) -> str:
     args_list = list(args)
 
@@ -142,6 +162,7 @@ async def run_agy(
     try:
         max_retries = 3
         for attempt in range(max_retries):
+            proc = None
             try:
                 env = os.environ.copy()
                 env["LGY_APPROVAL_HOOK"] = "1"
@@ -173,18 +194,25 @@ async def run_agy(
 
                 from config import AGY_BIN
 
-                cmd = [AGY_BIN] + args_list
+                log_path = _new_log_path()
+                cmd = [AGY_BIN, "--log-file", str(log_path)] + args_list
 
                 async with agy_start_lock:
-                    before_dirs = _snapshot_conversation_dirs()
                     proc = await asyncio.create_subprocess_exec(*cmd, **kwargs)
                     if thread_id:
                         active_processes[thread_id] = proc
 
-                    if stream_queue and "--conversation" not in args:
-                        new_conv_id = await _poll_new_conversation_id(before_dirs)
-                        if new_conv_id:
-                            await stream_queue.put(("__CONV_ID__:" + new_conv_id, False))
+                conv_id = None
+
+                async def _note(scan: LogScan) -> None:
+                    nonlocal conv_id
+                    if conv_id or not scan.conversation_id:
+                        return
+                    conv_id = scan.conversation_id
+                    if on_conversation:
+                        on_conversation(conv_id)
+                    if stream_queue is not None and "--conversation" not in args:
+                        await stream_queue.put(("__CONV_ID__:" + conv_id, False))
 
                 stdout_chunks = []
                 stderr_chunks = []
@@ -232,14 +260,23 @@ async def run_agy(
                 poll_slice = 5.0
                 remaining_budget = float(timeout)
                 timed_out = False
+                panic, log_offset = None, 0
                 while True:
+                    # Polled faster until the conversation id shows up, so approvals and streams bind early.
+                    slice_sec = poll_slice if conv_id else 0.5
                     done, _pending_tasks = await asyncio.wait(
-                        [gather_task, wait_task], return_when=asyncio.FIRST_COMPLETED, timeout=poll_slice
+                        [gather_task, wait_task], return_when=asyncio.FIRST_COMPLETED, timeout=slice_sec
                     )
+                    scan = _scan_log(log_path, log_offset)
+                    log_offset = scan.offset
+                    await _note(scan)
                     if done:
                         break
+                    if scan.panic:
+                        panic = scan.panic
+                        break
                     if not _sm.pending_approvals:
-                        remaining_budget -= poll_slice
+                        remaining_budget -= slice_sec
                         if remaining_budget <= 0:
                             timed_out = True
                             break
@@ -247,6 +284,16 @@ async def run_agy(
                 if timed_out:
                     gather_task.cancel()
                     raise asyncio.TimeoutError()
+
+                if panic:
+                    _terminate(proc)
+                    gather_task.cancel()
+                    # Not retried: the same conversation panics the same way again.
+                    error_msg = f"⚠️ agy crashed and was stopped.\n```\n{panic}\n```\nLog: `{log_path}`"
+                    logger.error(f"[AGY PANIC] {panic} (log: {log_path})")
+                    if stream_queue is not None:
+                        await stream_queue.put(("\n\n" + error_msg, True))
+                    return error_msg
 
                 if wait_task in done:
                     try:
@@ -295,27 +342,15 @@ async def run_agy(
                 return text or EMPTY_RESPONSE
 
             except asyncio.CancelledError:
-                try:
-                    if proc:
-                        if os.name == "nt":
-                            proc.send_signal(signal.CTRL_BREAK_EVENT)
-                        else:
-                            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-                except Exception:
-                    pass
+                if proc:
+                    _terminate(proc)
                 msg = RESTART_MESSAGE if shutting_down else "🛑 AI Task manually stopped by user."
                 if stream_queue is not None:
                     await stream_queue.put(("\n\n" + msg, True))
                 return msg
             except asyncio.TimeoutError:
-                try:
-                    if proc:
-                        if os.name == "nt":
-                            proc.send_signal(signal.CTRL_BREAK_EVENT)
-                        else:
-                            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-                except Exception:
-                    pass
+                if proc:
+                    _terminate(proc)
                 if attempt < max_retries - 1:
                     logger.warning("[AGY RETRY] Global timeout. Retrying...")
                     await asyncio.sleep(2.0)
@@ -352,9 +387,13 @@ async def agy_new_conversation(
     args = ["--dangerously-skip-permissions", "--print", content, "--print-timeout", "24h"]
     if model:
         args.extend(["--model", clean_model_name(model)])
-    result_text = await run_agy(*args, timeout=86400, stream_queue=stream_queue, thread_id=thread_id, cwd=cwd)
-    conv_id = await _get_latest_conversation_id()
-    return result_text, conv_id
+    found: list[str] = []
+    result_text = await run_agy(
+        *args, timeout=86400, stream_queue=stream_queue, thread_id=thread_id, cwd=cwd, on_conversation=found.append
+    )
+    if not found:
+        logger.warning("[AGY] Couldn't read the new conversation id from agy's log")
+    return result_text, found[-1] if found else ""
 
 
 async def agy_send_message(
