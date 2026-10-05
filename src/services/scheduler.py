@@ -363,8 +363,9 @@ async def _wait_until_idle(thread_id: str) -> None:
 def _is_silent(text: str) -> bool:
     from core.agy_runner import EMPTY_RESPONSE
 
-    # Prompts like "otherwise say nothing" often end in an empty answer rather than NO_REPLY.
-    return text.strip() == EMPTY_RESPONSE or text.strip().strip("`'\".").strip() in ("", NO_REPLY)
+    # agy's output includes its narration before tool calls, and "say nothing" prompts often end empty.
+    tail = text.strip().rstrip("`'\".").rstrip()
+    return text.strip() == EMPTY_RESPONSE or not tail or tail.endswith(NO_REPLY)
 
 
 async def _drain(thread_id: str, queue: asyncio.Queue) -> None:
