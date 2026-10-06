@@ -11,10 +11,7 @@ from utils.utils import clean_ansi, split_message
 
 
 def _clear_current_tool(thread_id: str):
-    """Removes the "current_tool"/"pending_approval_tool" markers set by
-    api/ui_routes.py while a tool call is being approved/run - without
-    this, the bot's presence status stays stuck on the last tool after
-    the turn finishes."""
+    # Otherwise the bot's presence status stays stuck on the last tool after the turn ends.
     session = session_manager.get_session(thread_id)
     if not session:
         return
@@ -53,6 +50,16 @@ class StreamUpdater:
         self.current_text = ""
         if self.context_dict is not None:
             self.context_dict["status_msg"] = None
+
+    def in_code_block(self) -> bool:
+        return len(re.findall(r"^```", self.current_text, re.MULTILINE)) % 2 == 1
+
+    async def append_block(self, text: str):
+        body = self.current_text.rstrip()
+        self.current_text = f"{body}\n\n{text}\n\n" if body else f"{text}\n\n"
+        # Waits out the rate window instead of skipping, so the line shows while the tool runs.
+        await asyncio.sleep(max(0.0, self.RATE_LIMIT_SEC - (time.time() - self.last_update_time)))
+        await self.flush(force=True)
 
     async def flush(self, force=False):
         now = time.time()
@@ -145,9 +152,7 @@ class TTSStreamManager:
 
 async def stream_thinking_latest(bot, thread: Any, thread_id: str, context_dict: dict, queue: asyncio.Queue):
     cog = bot.get_cog("VoiceCog") if bot else None
-    # getattr(..., None) is not None, not hasattr: discord.py's DMChannel has a `guild`
-    # property too (for duck-typing), but it always returns None - hasattr alone can't
-    # tell a real guild-backed channel/thread apart from a DM.
+    # DMChannel has a `guild` property that is always None, so hasattr can't tell a DM from a guild thread.
     guild = getattr(thread, "guild", None)
     is_voice = bool(
         cog and guild is not None and str(guild.id) in cog._voice_state and cog._voice_state[str(guild.id)] == thread.id
@@ -161,6 +166,16 @@ async def stream_thinking_latest(bot, thread: Any, thread_id: str, context_dict:
             item = await queue.get()
             if item is None:
                 break
+
+            if isinstance(item, tuple) and item and item[0] == "__TOOL_CALL__":
+                _, text, send_coro_factory, done_future = item
+                # Inserted inside an open code fence it would break the markdown, so that case still posts apart.
+                if not ui_mgr.in_code_block():
+                    await ui_mgr.append_block(text)
+                    if not done_future.done():
+                        done_future.set_result(None)
+                    continue
+                item = ("__RUN_ORDERED__", send_coro_factory, done_future)
 
             if isinstance(item, tuple) and item and item[0] == "__RUN_ORDERED__":
                 _, send_coro_factory, done_future = item

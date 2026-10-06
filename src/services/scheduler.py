@@ -374,6 +374,11 @@ async def _drain(thread_id: str, queue: asyncio.Queue) -> None:
 
     while True:
         item = await queue.get()
+        if isinstance(item, tuple) and item and item[0] == "__TOOL_CALL__":
+            # Nothing is shown while the run is undecided; resolving it keeps the hook from waiting forever.
+            if not item[3].done():
+                item[3].set_result(None)
+            continue
         if isinstance(item, tuple) and item and item[0] == "__RUN_ORDERED__":
             _, factory, done = item
             try:

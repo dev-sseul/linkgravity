@@ -21,9 +21,7 @@ from utils.utils import split_message
 
 
 async def send_ordered(target_thread_id, send_coro_factory):
-    """Routes through the same per-conversation stream queue as the answer
-    text, so tool-call messages can't arrive out of order. Falls back to
-    a direct call if no stream is registered."""
+    # Shares the answer's stream queue so prompts can't land out of order with the text.
     q = session_manager.get_queue(target_thread_id) if target_thread_id else None
     if not q:
         return await send_coro_factory()
@@ -37,11 +35,18 @@ async def send_ordered(target_thread_id, send_coro_factory):
     return await done
 
 
+async def show_tool_call(target_thread_id, text: str, send_coro_factory):
+    # Folded into the streaming message as an edit, so each tool call doesn't post (and notify) anew.
+    q = session_manager.get_queue(target_thread_id) if target_thread_id else None
+    if not q:
+        return await send_coro_factory()
+    done = asyncio.get_running_loop().create_future()
+    q.put_nowait(("__TOOL_CALL__", text, send_coro_factory, done))
+    return await done
+
+
 def build_permission_overrides(tool_name, tool_input):
-    """Builds the PreToolUse `permissionOverrides` output field for an
-    approved call. Print mode soft-denies a tool unless a matching allow
-    rule exists even when the hook says "allow"; returning
-    "command(<CommandLine>)" supplies that rule for this one call."""
+    # Print mode soft-denies a command without a matching allow rule, even when the hook allows it.
     if tool_name == "run_command" and isinstance(tool_input, dict):
         command_line = tool_input.get("CommandLine")
         if command_line:
@@ -65,10 +70,7 @@ async def _send_chunked(adapter, thread, text: str) -> None:
 
 
 def _persist_scope_if_granted(prompt_handle):
-    """If the prompt was resolved via a persistent-allow button, records
-    that scope. Scope persistence is business logic, so it lives here
-    rather than inside the adapter's button callback - a future resolved
-    by a non-UI path (typed reply, voice) simply has no outcome/scope."""
+    # Here rather than in the adapter's button callback: typed or voice replies carry no scope.
     outcome = prompt_handle.outcome
     if outcome and outcome.decision == "allow" and outcome.scope:
         kind, scope = outcome.scope.kind, outcome.scope.scope
@@ -117,7 +119,6 @@ async def handle_approve_request(request):
         tool_input = data.get("tool_input")
         payload_thread_id = data.get("thread_id")
 
-        # DEBUG-only (see logger.py's LOG_LEVEL). Silent by default.
         logger.debug(f"[APPROVE HOOK] tool_name={tool_name!r} conv_id={conv_id!r} tool_input={tool_input!r}")
 
         # Ahead of the auto-allow lookup: this must not be overridable by a persistent grant.
@@ -285,7 +286,6 @@ async def handle_approve_request(request):
                     f"{json.dumps(tool_input, indent=2, ensure_ascii=False)[:1000]}\n```"
                 )
 
-                # Persistent-allow options: expanding prefixes of the sub-command's tokens.
                 scope_options = []
                 try:
                     tokens = shlex.split(sub_cmd)
@@ -334,10 +334,14 @@ async def handle_approve_request(request):
 
             # A scheduled run can end in NO_REPLY, and echoed tool calls would break that silence.
             if target_thread and tool_msg_text and not prompted and not schedule_mode:
-                await send_ordered(target_thread_id, lambda: _send_chunked(adapter, target_thread, tool_msg_formatted))
+                await show_tool_call(
+                    target_thread_id,
+                    tool_msg_formatted,
+                    lambda: _send_chunked(adapter, target_thread, tool_msg_formatted),
+                )
 
             if not prompted:
-                _set_tool_status("current_tool")  # auto-allowed - runs immediately, no approval wait
+                _set_tool_status("current_tool")
 
             return allow_response(tool_name, tool_input)
 
@@ -348,10 +352,12 @@ async def handle_approve_request(request):
             )
             if auto_mode or self_confirmed or is_tool_allowed(tool_name, tool_input):
                 if target_thread and tool_msg_text and not schedule_mode:
-                    await send_ordered(
-                        target_thread_id, lambda: _send_chunked(adapter, target_thread, tool_msg_formatted)
+                    await show_tool_call(
+                        target_thread_id,
+                        tool_msg_formatted,
+                        lambda: _send_chunked(adapter, target_thread, tool_msg_formatted),
                     )
-                _set_tool_status("current_tool")  # auto-allowed - runs immediately, no approval wait
+                _set_tool_status("current_tool")
                 return allow_response(tool_name, tool_input)
             approval_key = f"{conv_id}:{uuid.uuid4().hex}"
             future = asyncio.get_running_loop().create_future()
