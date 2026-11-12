@@ -91,8 +91,7 @@ async def handle_pending_session(
 
             await send_agy_response(thread, response_text, session, ctx, start_time, new_conv_id)
 
-        # Outside the typing indicator: the answer is already on screen, and leaving "typing"
-        # up during the extra title call reads as if more output is still coming.
+        # Typing during the title call, after the answer is shown, reads as if more output is coming.
         if needs_title:
             new_title = await generate_thread_title(content, result_text)
             await adapter.rename_conversation(thread, new_title)
@@ -142,6 +141,42 @@ async def _run_tracked(thread_id: str, coro) -> None:
     finally:
         if session_manager.get_handler_task(thread_id) is task:
             session_manager.remove_handler_task(thread_id)
+
+
+def stop_turn(thread_id: str) -> str:
+    session = session_manager.get_session(thread_id)
+    if session:
+        conv_id = session.get("conversation_id")
+        future = (
+            session_manager.get_pending_approval_by_conv(conv_id)
+            if conv_id
+            else session_manager.get_pending_approval_by_thread(thread_id)
+        )
+        if future and not future.done():
+            future.set_result("reject")
+
+        prev_tts = session_manager.get_tts_task(thread_id)
+        if prev_tts and not prev_tts.done():
+            prev_tts.cancel()
+            session_manager.remove_tts_task(thread_id)
+
+        # Pending requires conversation_id unset too, not just the status.
+        session_manager.set_session(thread_id, {**session, "status": "pending", "conversation_id": None})
+
+    # Killing agy alone leaves the typing indicator up until the handler leaves its typing block.
+    handler = session_manager.get_handler_task(thread_id)
+    cancelled = bool(handler and handler is not asyncio.current_task() and not handler.done())
+    if cancelled:
+        handler.cancel()
+        session_manager.remove_handler_task(thread_id)
+
+    from core.agy_runner import stop_active_process
+
+    if stop_active_process(thread_id):
+        return "🛑 Process stopped natively."
+    if cancelled:
+        return "🛑 Stopped."
+    return "🛑 Nothing was running."
 
 
 async def handle_thread_reply(bot, incoming: IncomingMessage):

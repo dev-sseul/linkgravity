@@ -17,6 +17,7 @@ from config import (
 )
 from core.atomic_io import atomic_write_json, safe_load_json
 from handlers.message_router import handle_message
+from handlers.thread_reply import stop_turn
 from messengers.registry import register_adapter
 from messengers.telegram_adapter import TelegramAdapter, markdown_to_telegram_html, safe_query_edit
 from utils.utils import get_default_cwd
@@ -235,6 +236,13 @@ async def cmd_credit(update: Update, context) -> None:
     await update.message.reply_text("AI Credits:", reply_markup=keyboard)
 
 
+async def cmd_stop(update: Update, context) -> None:
+    if not allowed(update.effective_user.id, "telegram"):
+        await update.message.reply_text("❌ Denied")
+        return
+    await update.message.reply_text(stop_turn(str(update.effective_chat.id)))
+
+
 async def on_message(update: Update, context) -> None:
     chat_id = update.effective_chat.id
     user = update.effective_user
@@ -260,6 +268,7 @@ async def on_ready(app: Application) -> None:
     await app.bot.set_my_commands(
         [
             BotCommand("new", "Start a new session (or /start)"),
+            BotCommand("stop", "Stop the current response or task"),
             BotCommand("model", "Change the AI model for this session"),
             BotCommand("credit", "Turn AI Credits on/off"),
             BotCommand("permissions", "View and remove allowed tools and commands"),
@@ -277,6 +286,7 @@ def build_application() -> Application:
     register_adapter("telegram", adapter)
 
     app.add_handler(CommandHandler(["new", "start"], cmd_new))
+    app.add_handler(CommandHandler("stop", cmd_stop))
     app.add_handler(CommandHandler("model", cmd_model))
     app.add_handler(CommandHandler("credit", cmd_credit))
     app.add_handler(CommandHandler("permissions", cmd_permissions))
@@ -289,10 +299,7 @@ def build_application() -> Application:
 
 
 async def run_telegram(stop_event: asyncio.Event) -> None:
-    """Runs the Telegram bot manually (not via Application.run_polling(),
-    which blocks and manages its own event loop) so it can run alongside
-    Discord in the same process. See PTB docs on combining Application
-    with other asyncio frameworks."""
+    # Not run_polling(): it blocks and owns the event loop, which Discord shares in this process.
     if not TELEGRAM_TOKEN:
         logger.critical("Missing TELEGRAM_TOKEN - set telegram_token in lgy.json first.")
         return

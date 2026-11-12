@@ -20,6 +20,7 @@ from config import (
 )
 from core.agy_runner import clean_model_name
 from core.atomic_io import atomic_write_json, safe_load_json
+from handlers.thread_reply import stop_turn
 from utils.utils import get_default_cwd
 
 MODELS_CACHE_FILE = DATA_DIR / "models.json"
@@ -307,38 +308,4 @@ class GeneralCog(commands.Cog):
     async def cmd_stop(self, interaction: discord.Interaction):
         if not allowed(interaction.user.id):
             return await interaction.response.send_message("❌ Denied", ephemeral=True)
-        thread_id = str(interaction.channel_id)
-
-        session = session_manager.get_session(thread_id)
-        if session:
-            conv_id = session.get("conversation_id")
-            future = session_manager.get_pending_approval_by_conv(conv_id)
-            if future and not future.done():
-                future.set_result("reject")
-
-            prev_tts = session_manager.get_tts_task(thread_id)
-            if prev_tts and not prev_tts.done():
-                prev_tts.cancel()
-                session_manager.remove_tts_task(thread_id)
-
-            # Must clear conversation_id too, not just status - pending requires both unset.
-            session_manager.set_session(thread_id, {**session, "status": "pending", "conversation_id": None})
-
-        # The typing indicator only clears when the handler leaves its `async with adapter.typing()`
-        # block, and that block outlives the agy process (title generation, final send), so killing
-        # the process alone can leave the thread stuck showing "is thinking...".
-        handler = session_manager.get_handler_task(thread_id)
-        cancelled = bool(handler and handler is not asyncio.current_task() and not handler.done())
-        if cancelled:
-            handler.cancel()
-            session_manager.remove_handler_task(thread_id)
-
-        from core.agy_runner import stop_active_process
-
-        if stop_active_process(thread_id):
-            msg = "🛑 Process stopped natively."
-        elif cancelled:
-            msg = "🛑 Stopped."
-        else:
-            msg = "🛑 Nothing was running."
-        await interaction.response.send_message(msg, ephemeral=True)
+        await interaction.response.send_message(stop_turn(str(interaction.channel_id)), ephemeral=True)
