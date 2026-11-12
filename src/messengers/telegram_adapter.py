@@ -1,6 +1,3 @@
-"""Telegram implementation of MessengerAdapter. 1 chat = 1 session (no
-forum-topic support yet) - see handoff notes for the forum-mode follow-up."""
-
 import asyncio
 import html
 import re
@@ -29,19 +26,27 @@ from messengers.base import (
 
 _CODE_BLOCK_RE = re.compile(r"```(?:\w+\n)?(.*?)```|`([^`\n]+)`", re.DOTALL)
 _BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
+_HEADING_RE = re.compile(r"^#{1,6} (.+)$", re.MULTILINE)
+_SUBTEXT_RE = re.compile(r"^-# (.+)$", re.MULTILINE)
+
+
+def _prose_to_html(text: str) -> str:
+    # Inner ** is dropped so a bold heading doesn't become <b> nested in <b>.
+    text = _HEADING_RE.sub(lambda m: f"<b>{m.group(1).replace('**', '')}</b>", html.escape(text))
+    text = _BOLD_RE.sub(r"<b>\1</b>", text)
+    return _SUBTEXT_RE.sub(r"<i>\1</i>", text)
 
 
 def markdown_to_telegram_html(text: str) -> str:
-    """Converts the Discord-flavored markdown this codebase generates (bold, code fences) into Telegram's HTML parse mode, escaping everything else."""
     out = []
     pos = 0
     for m in _CODE_BLOCK_RE.finditer(text):
-        out.append(_BOLD_RE.sub(r"<b>\1</b>", html.escape(text[pos : m.start()])))
+        out.append(_prose_to_html(text[pos : m.start()]))
         content = m.group(1) if m.group(1) is not None else m.group(2)
         tag = "pre" if m.group(1) is not None else "code"
         out.append(f"<{tag}>{html.escape(content)}</{tag}>")
         pos = m.end()
-    out.append(_BOLD_RE.sub(r"<b>\1</b>", html.escape(text[pos:])))
+    out.append(_prose_to_html(text[pos:]))
     return "".join(out)
 
 
@@ -154,7 +159,6 @@ class TelegramAdapter(MessengerAdapter):
 
     def __init__(self, bot):
         self.bot = bot
-        # callback_data -> async handler(query); prompts add/remove their own keys here.
         self._callbacks: dict[str, Callable[[Any], Awaitable[None]]] = {}
 
     def register_callback(self, key: str, handler: Callable[[Any], Awaitable[None]]) -> None:
@@ -172,8 +176,6 @@ class TelegramAdapter(MessengerAdapter):
             await query.answer("This action has expired.", show_alert=True)
             return
         await handler(query)
-
-    # -- inbound -------------------------------------------------------------
 
     def _make_reader(self, file_id: str) -> Callable[[], Awaitable[bytes]]:
         async def _reader() -> bytes:
@@ -240,8 +242,6 @@ class TelegramAdapter(MessengerAdapter):
             add_reaction=add_reaction,
         )
 
-    # -- plain messaging ---------------------------------------------------
-
     async def send_message(self, conversation_ref: int, text: str) -> Message:
         try:
             return await self.bot.send_message(
@@ -253,11 +253,17 @@ class TelegramAdapter(MessengerAdapter):
 
     async def edit_message(self, message_ref: Message, text: str) -> bool:
         try:
-            await self.bot.edit_message_text(chat_id=message_ref.chat_id, message_id=message_ref.message_id, text=text)
+            await self.bot.edit_message_text(
+                chat_id=message_ref.chat_id,
+                message_id=message_ref.message_id,
+                text=markdown_to_telegram_html(text),
+                parse_mode="HTML",
+            )
             return True
         except TelegramError as e:
+            # Same text is already on screen; reporting failure would make the caller send a duplicate.
             if "message is not modified" in str(e).lower():
-                return True  # already showing this exact text - not a real failure, don't send a duplicate
+                return True
             logger.warning(f"Failed to edit Telegram message: {e}")
             return False
 
@@ -303,8 +309,6 @@ class TelegramAdapter(MessengerAdapter):
             task.cancel()
             with suppress(asyncio.CancelledError):
                 await task
-
-    # -- interactive prompts ----------------------------------------------
 
     def create_tool_approval_prompt(
         self,
